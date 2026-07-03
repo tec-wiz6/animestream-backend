@@ -1,50 +1,34 @@
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
+const fetch = require('node-fetch');
 const cheerio = require('cheerio');
-const https = require('https');
 
-// Custom headers to bypass Cloudflare
-const BROWSER_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Cache-Control': 'max-age=0'
-};
-
-// Custom axios instance with retry logic
-const axiosInstance = axios.create({
-    timeout: 30000,
-    headers: BROWSER_HEADERS,
-    httpsAgent: new https.Agent({
-        rejectUnauthorized: false,
-        keepAlive: true
-    }),
-    maxRedirects: 5,
-    validateStatus: function (status) {
-        return status >= 200 && status < 400;
-    }
-});
-
-// Function to fetch with retry
+// Simple fetch with retry
 async function fetchWithRetry(url, retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
-            console.log(`Attempt ${i + 1} to fetch: ${url}`);
-            const response = await axiosInstance.get(url);
-            return response;
+            console.log(`📡 Attempt ${i + 1} to fetch: ${url}`);
+            const response = await fetch(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive'
+                },
+                timeout: 30000
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const text = await response.text();
+            return text;
         } catch (error) {
-            console.log(`Attempt ${i + 1} failed: ${error.message}`);
+            console.log(`❌ Attempt ${i + 1} failed: ${error.message}`);
             if (i === retries - 1) throw error;
-            // Wait before retry
-            await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
+            await new Promise(resolve => setTimeout(resolve, 3000 * (i + 1)));
         }
     }
 }
@@ -57,8 +41,7 @@ async function scrapeFullDetails() {
         const targetUrl = process.env.TARGET_URL || 'https://animepahe.pw/';
         console.log(`📡 Fetching: ${targetUrl}`);
         
-        const response = await fetchWithRetry(targetUrl);
-        const html = response.data;
+        const html = await fetchWithRetry(targetUrl);
         const $ = cheerio.load(html);
         
         const episodes = [];
@@ -74,13 +57,10 @@ async function scrapeFullDetails() {
             '.video'
         ];
         
-        let found = false;
-        
         for (const selector of selectors) {
             const elements = $(selector);
             if (elements.length > 0) {
                 console.log(`✅ Found ${elements.length} items with selector: ${selector}`);
-                found = true;
                 
                 elements.each((i, element) => {
                     const $el = $(element);
@@ -128,7 +108,7 @@ async function scrapeFullDetails() {
         // Fallback: find any links to episodes
         if (episodes.length === 0) {
             console.log('🔄 Trying fallback selectors...');
-            $('a[href*="/episode"], a[href*="/watch"], a[href*="/video"], a[href*="/anime"]').each((i, element) => {
+            $('a[href*="/episode"], a[href*="/watch"], a[href*="/video"]').each((i, element) => {
                 const $el = $(element);
                 const title = $el.text().trim() || `Episode ${i+1}`;
                 const link = $el.attr('href');
