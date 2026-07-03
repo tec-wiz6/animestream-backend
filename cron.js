@@ -3,8 +3,9 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 const cheerio = require('cheerio');
+const zlib = require('zlib');
 
-// Custom fetch using native HTTPS
+// Custom fetch with proper decompression
 function fetchUrl(url) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
@@ -28,25 +29,34 @@ function fetchUrl(url) {
         };
         
         const req = client.request(options, (res) => {
-            let data = '';
+            const chunks = [];
             
             res.on('data', (chunk) => {
-                data += chunk;
+                chunks.push(chunk);
             });
             
             res.on('end', () => {
-                if (res.statusCode >= 200 && res.statusCode < 400) {
-                    resolve(data);
+                let buffer = Buffer.concat(chunks);
+                
+                // Handle decompression
+                const encoding = res.headers['content-encoding'];
+                if (encoding === 'gzip') {
+                    zlib.gunzip(buffer, (err, decoded) => {
+                        if (err) reject(err);
+                        else resolve(decoded.toString());
+                    });
+                } else if (encoding === 'deflate') {
+                    zlib.inflate(buffer, (err, decoded) => {
+                        if (err) reject(err);
+                        else resolve(decoded.toString());
+                    });
                 } else {
-                    reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+                    resolve(buffer.toString());
                 }
             });
         });
         
-        req.on('error', (error) => {
-            reject(error);
-        });
-        
+        req.on('error', reject);
         req.on('timeout', () => {
             req.destroy();
             reject(new Error('Request timeout'));
@@ -60,8 +70,9 @@ function fetchUrl(url) {
 async function fetchWithRetry(url, retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
-            console.log(`📡 Attempt ${i + 1} to fetch: ${url}`);
+            console.log(`📡 Attempt ${i + 1}: ${url}`);
             const data = await fetchUrl(url);
+            console.log(`✅ Success (${data.length} bytes)`);
             return data;
         } catch (error) {
             console.log(`❌ Attempt ${i + 1} failed: ${error.message}`);
@@ -85,83 +96,62 @@ async function scrapeFullDetails() {
         const episodes = [];
         
         // Try multiple selectors
-        const selectors = [
-            '.episode-box',
-            '.episode-item', 
-            '.video-item',
-            '.anime-item',
-            '.item',
-            '.episode',
-            '.video'
-        ];
-        
-        for (const selector of selectors) {
-            const elements = $(selector);
-            if (elements.length > 0) {
-                console.log(`✅ Found ${elements.length} items with selector: ${selector}`);
-                
-                elements.each((i, element) => {
-                    const $el = $(element);
-                    
-                    const title = $el.find('.episode-title, .title, h3, h4, .name').first().text().trim();
-                    const description = $el.find('.description, .synopsis, .summary, p, .desc').text().trim();
-                    const image = $el.find('img').attr('src') || $el.find('img').attr('data-src') || $el.find('img').attr('data-original');
-                    const link = $el.find('a').attr('href') || $el.find('a').attr('data-href');
-                    const episodeNum = $el.find('.episode-number, .ep-num, .num, .episode').text().trim() || (i + 1);
-                    
-                    if (title || link) {
-                        episodes.push({
-                            id: i + 1,
-                            title: title || `Episode ${episodeNum}`,
-                            episode: parseInt(episodeNum) || i + 1,
-                            description: description || 'No description available',
-                            image: image ? (image.startsWith('http') ? image : `https://animepahe.pw${image}`) : null,
-                            link: link ? (link.startsWith('http') ? link : `https://animepahe.pw${link}`) : null,
-                            quality: 'HD',
-                            type: 'Subbed',
-                            rating: 'N/A',
-                            releaseDate: new Date().toISOString().split('T')[0],
-                            timestamp: new Date().toISOString(),
-                            season: 'Season 1',
-                            studio: 'Unknown',
-                            genres: []
-                        });
-                    }
-                });
-                
-                if (episodes.length > 0) break;
-            }
-        }
-        
-        // Fallback
-        if (episodes.length === 0) {
-            console.log('🔄 Trying fallback selectors...');
-            $('a[href*="/episode"], a[href*="/watch"], a[href*="/video"]').each((i, element) => {
-                const $el = $(element);
-                const title = $el.text().trim() || `Episode ${i+1}`;
-                const link = $el.attr('href');
+        $('a').each((i, element) => {
+            const $el = $(element);
+            const href = $el.attr('href');
+            
+            // Look for episode links
+            if (href && (href.includes('/episode') || href.includes('/watch') || href.includes('/video'))) {
+                const title = $el.find('.title, .episode-title, h3, h4').first().text().trim() || `Episode ${episodes.length + 1}`;
                 const image = $el.find('img').attr('src') || $el.find('img').attr('data-src');
                 
-                if (link) {
-                    episodes.push({
-                        id: i + 1,
-                        title: title,
-                        episode: i + 1,
-                        description: 'No description available',
-                        image: image ? (image.startsWith('http') ? image : `https://animepahe.pw${image}`) : null,
-                        link: link.startsWith('http') ? link : `https://animepahe.pw${link}`,
-                        quality: 'HD',
-                        type: 'Subbed',
-                        rating: 'N/A',
-                        releaseDate: new Date().toISOString().split('T')[0],
-                        timestamp: new Date().toISOString(),
-                        season: 'Season 1',
-                        studio: 'Unknown',
-                        genres: []
-                    });
-                }
-            });
-        }
+                episodes.push({
+                    id: episodes.length + 1,
+                    title: title,
+                    episode: episodes.length + 1,
+                    description: 'No description available',
+                    image: image ? (image.startsWith('http') ? image : `https://animepahe.pw${image}`) : null,
+                    link: href.startsWith('http') ? href : `https://animepahe.pw${href}`,
+                    quality: 'HD',
+                    type: 'Subbed',
+                    rating: 'N/A',
+                    releaseDate: new Date().toISOString().split('T')[0],
+                    timestamp: new Date().toISOString(),
+                    season: 'Season 1',
+                    studio: 'Unknown',
+                    genres: []
+                });
+            }
+        });
+        
+        // Also check for episode boxes
+        $('.episode-box, .episode-item, .video-item, .anime-item, .item').each((i, element) => {
+            const $el = $(element);
+            const title = $el.find('.episode-title, .title, h3, h4, .name').first().text().trim();
+            const link = $el.find('a').attr('href');
+            const image = $el.find('img').attr('src') || $el.find('img').attr('data-src');
+            
+            if (title && link && !episodes.find(e => e.link === link)) {
+                episodes.push({
+                    id: episodes.length + 1,
+                    title: title,
+                    episode: episodes.length + 1,
+                    description: $el.find('.description, .synopsis, .summary, p').text().trim() || 'No description available',
+                    image: image ? (image.startsWith('http') ? image : `https://animepahe.pw${image}`) : null,
+                    link: link.startsWith('http') ? link : `https://animepahe.pw${link}`,
+                    quality: 'HD',
+                    type: 'Subbed',
+                    rating: 'N/A',
+                    releaseDate: new Date().toISOString().split('T')[0],
+                    timestamp: new Date().toISOString(),
+                    season: 'Season 1',
+                    studio: 'Unknown',
+                    genres: []
+                });
+            }
+        });
+        
+        console.log(`📊 Found ${episodes.length} episodes`);
         
         // Save to file
         const dataDir = path.join(__dirname, 'data');
@@ -180,12 +170,11 @@ async function scrapeFullDetails() {
             JSON.stringify(data, null, 2)
         );
         
-        console.log(`✅ Scraped ${episodes.length} episodes successfully`);
+        console.log(`✅ Saved ${episodes.length} episodes successfully`);
         return data;
         
     } catch (error) {
         console.error('❌ Scrape error:', error.message);
-        console.error('Stack:', error.stack);
         throw error;
     }
 }
@@ -194,7 +183,7 @@ async function scrapeFullDetails() {
 if (require.main === module) {
     scrapeFullDetails()
         .then(() => {
-            console.log('✅ Cron job completed successfully');
+            console.log('✅ Cron job completed');
             process.exit(0);
         })
         .catch((error) => {
