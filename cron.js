@@ -1,30 +1,68 @@
 const fs = require('fs');
 const path = require('path');
-const fetch = require('node-fetch');
+const https = require('https');
+const http = require('http');
 const cheerio = require('cheerio');
 
-// Simple fetch with retry
+// Custom fetch using native HTTPS
+function fetchUrl(url) {
+    return new Promise((resolve, reject) => {
+        const urlObj = new URL(url);
+        const isHttps = urlObj.protocol === 'https:';
+        const client = isHttps ? https : http;
+        
+        const options = {
+            hostname: urlObj.hostname,
+            port: urlObj.port || (isHttps ? 443 : 80),
+            path: urlObj.pathname + urlObj.search,
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            },
+            timeout: 30000
+        };
+        
+        const req = client.request(options, (res) => {
+            let data = '';
+            
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
+            
+            res.on('end', () => {
+                if (res.statusCode >= 200 && res.statusCode < 400) {
+                    resolve(data);
+                } else {
+                    reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+                }
+            });
+        });
+        
+        req.on('error', (error) => {
+            reject(error);
+        });
+        
+        req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('Request timeout'));
+        });
+        
+        req.end();
+    });
+}
+
+// Fetch with retry
 async function fetchWithRetry(url, retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
             console.log(`📡 Attempt ${i + 1} to fetch: ${url}`);
-            const response = await fetch(url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Connection': 'keep-alive'
-                },
-                timeout: 30000
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            
-            const text = await response.text();
-            return text;
+            const data = await fetchUrl(url);
+            return data;
         } catch (error) {
             console.log(`❌ Attempt ${i + 1} failed: ${error.message}`);
             if (i === retries - 1) throw error;
@@ -46,7 +84,7 @@ async function scrapeFullDetails() {
         
         const episodes = [];
         
-        // Try multiple selectors to find episodes
+        // Try multiple selectors
         const selectors = [
             '.episode-box',
             '.episode-item', 
@@ -71,16 +109,6 @@ async function scrapeFullDetails() {
                     const link = $el.find('a').attr('href') || $el.find('a').attr('data-href');
                     const episodeNum = $el.find('.episode-number, .ep-num, .num, .episode').text().trim() || (i + 1);
                     
-                    let releaseDate = $el.find('.release-date, .date, .time, .updated').text().trim();
-                    if (!releaseDate) {
-                        releaseDate = $el.find('[data-date], [data-release]').attr('data-date') || 
-                                      $el.find('[datetime]').attr('datetime');
-                    }
-                    
-                    const quality = $el.find('.quality, .hd, .resolution, .q').text().trim() || 'HD';
-                    const type = $el.find('.type, .sub, .dub, .lang').text().trim() || 'Subbed';
-                    const rating = $el.find('.rating, .score, .rate').text().trim() || 'N/A';
-                    
                     if (title || link) {
                         episodes.push({
                             id: i + 1,
@@ -89,14 +117,14 @@ async function scrapeFullDetails() {
                             description: description || 'No description available',
                             image: image ? (image.startsWith('http') ? image : `https://animepahe.pw${image}`) : null,
                             link: link ? (link.startsWith('http') ? link : `https://animepahe.pw${link}`) : null,
-                            quality: quality || 'HD',
-                            type: type || 'Subbed',
-                            rating: rating || 'N/A',
-                            releaseDate: releaseDate || new Date().toISOString().split('T')[0],
+                            quality: 'HD',
+                            type: 'Subbed',
+                            rating: 'N/A',
+                            releaseDate: new Date().toISOString().split('T')[0],
                             timestamp: new Date().toISOString(),
-                            season: $el.find('.season').text().trim() || 'Season 1',
-                            studio: $el.find('.studio, .by').text().trim() || 'Unknown',
-                            genres: $el.find('.genre, .tags, .categories').text().trim().split(',').map(g => g.trim()).filter(Boolean) || []
+                            season: 'Season 1',
+                            studio: 'Unknown',
+                            genres: []
                         });
                     }
                 });
@@ -105,7 +133,7 @@ async function scrapeFullDetails() {
             }
         }
         
-        // Fallback: find any links to episodes
+        // Fallback
         if (episodes.length === 0) {
             console.log('🔄 Trying fallback selectors...');
             $('a[href*="/episode"], a[href*="/watch"], a[href*="/video"]').each((i, element) => {
