@@ -2,12 +2,13 @@ name: Auto-Scrape Anime
 
 on:
   schedule:
-    - cron: '*/5 * * * *'      # Every 5 minutes
-  workflow_dispatch:            # Manual trigger
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    
     steps:
       - uses: actions/checkout@v3
       
@@ -16,9 +17,13 @@ jobs:
         with:
           node-version: '18'
           
-      - name: Install dependencies
-        run: npm install
-        
+      - name: Clean install (no cache)
+        run: |
+          rm -rf node_modules
+          rm -rf package-lock.json
+          npm cache clean --force
+          npm install --no-package-lock
+          
       - name: Run scraper
         run: node cron.js
         
