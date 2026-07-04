@@ -1,33 +1,30 @@
 {
-  "lastUpdated": "2026-07-04T00:18:23.594Z",
-  "totalEpisodes": 10,
+  "lastUpdated": "2026-07-04T00:22:12.607Z",
+  "totalEpisodes": 1,
   "episodes": [
     {
       "id": 1,
-      "title": "Sample Episode 1 - Testing",
+      "title": "Click here to enter",
       "episode": 1,
-      "description": "Sample episode. Working on getting real data.",
+      "description": "No description available",
       "image": null,
-      "link": null,
+      "link": "http://animeultima.to/latest?tr_uuid=20260704-1022-0753-9c13-dd0387e71bc8&fp=-3",
       "quality": "HD",
       "type": "Subbed",
       "rating": "N/A",
       "releaseDate": "2026-07-04",
-      "timestamp": "2026-07-04T00:18:23.594Z",
+      "timestamp": "2026-07-04T00:22:07.059Z",
       "season": "Season 1",
-      "studio": "Sample",
-      "genres": [
-        "Action"
-      ],
-      "source": "Sample"
+      "studio": "Unknown",
+      "genres": [],
+      "source": "AnimeUltima (Working)"
     }
   ],
   "siteStats": {
-    "AnimePahe (PW)": 0,
-    "AnimePahe (RU)": 0,
-    "AnimePahe (COM)": 0,
-    "AnimePahe (ORG)": 0,
-    "AnimePahe (NET)": 0
-  },
-  "note": "Trying all AnimePahe domains. One of them should work!"
+    "AnimeKisa (Working)": 0,
+    "KissAnime (Working)": 0,
+    "SimplyAnime (Working)": 0,
+    "AnimeUltima (Working)": 1,
+    "AnimeFox (Working)": 0
+  }
 }
