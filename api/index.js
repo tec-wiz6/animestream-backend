@@ -4,7 +4,7 @@ const NodeCache = require('node-cache');
 const { scrapeAnimeEpisodes, scrapeEpisodeSource } = require('../scraper');
 
 const app = express();
-const cache = new NodeCache({ stdTTL: 3600 }); // Cache for 1 hour
+const cache = new NodeCache({ stdTTL: 3600 });
 
 app.use(cors());
 app.use(express.json());
@@ -20,20 +20,18 @@ app.get('/api/anime/:id/episodes', async (req, res) => {
     const { id } = req.params;
     const cacheKey = `episodes_${id}`;
     
-    // Check cache first
     let episodes = cache.get(cacheKey);
     if (episodes) {
-      return res.json({ episodes, cached: true });
+      return res.json({ episodes, cached: true, source: 'cache' });
     }
 
-    // Scrape episodes
     episodes = await scrapeAnimeEpisodes(id);
     cache.set(cacheKey, episodes);
     
-    res.json({ episodes, cached: false });
+    res.json({ episodes, cached: false, source: 'scrape' });
   } catch (error) {
     console.error('Error fetching episodes:', error);
-    res.status(500).json({ error: 'Failed to fetch episodes' });
+    res.status(500).json({ error: 'Failed to fetch episodes', message: error.message });
   }
 });
 
@@ -43,13 +41,11 @@ app.get('/api/anime/:id/episode/:num', async (req, res) => {
     const { id, num } = req.params;
     const cacheKey = `episode_${id}_${num}`;
     
-    // Check cache
     let videoSource = cache.get(cacheKey);
     if (videoSource) {
       return res.json({ ...videoSource, cached: true });
     }
 
-    // Scrape video source
     videoSource = await scrapeEpisodeSource(id, parseInt(num));
     cache.set(cacheKey, videoSource);
     
@@ -60,7 +56,7 @@ app.get('/api/anime/:id/episode/:num', async (req, res) => {
   }
 });
 
-// Search anime (using your existing method)
+// Search anime
 app.get('/api/search', async (req, res) => {
   try {
     const { q, page = 1 } = req.query;
@@ -74,4 +70,18 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
+// Root route to test
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'REWIND API is running!',
+    endpoints: [
+      '/api/health',
+      '/api/anime/:id/episodes',
+      '/api/anime/:id/episode/:num',
+      '/api/search?q=anime'
+    ]
+  });
+});
+
+// For Vercel - export the app
 module.exports = app;
