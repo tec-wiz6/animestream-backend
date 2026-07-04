@@ -1,266 +1,238 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const http = require('http');
-const cheerio = require('cheerio');
-const zlib = require('zlib');
 
-// 🔥 WORKING ANIME SITES (No Cloudflare issues)
-const ANIME_SITES = [
-    {
-        name: 'AnimeKisa (Working)',
-        url: 'https://animekisa.tv/latest',
-        selectors: ['.episode-item', '.video-item', '.anime-item', '.item', '.movie-item'],
-        titleSelector: '.title, .episode-title, h3, h4, .name',
-        linkSelector: 'a',
-        imageSelector: 'img'
-    },
-    {
-        name: 'KissAnime (Working)',
-        url: 'https://kissanime.com.ru/latest',
-        selectors: ['.episode-box', '.video-item', '.anime-item', '.item'],
-        titleSelector: '.title, .episode-title, h3, h4',
-        linkSelector: 'a',
-        imageSelector: 'img'
-    },
-    {
-        name: 'SimplyAnime (Working)',
-        url: 'https://simplyanime.net/latest',
-        selectors: ['.episode-box', '.video-item', '.anime-item', '.item'],
-        titleSelector: '.title, .episode-title, h3, h4',
-        linkSelector: 'a',
-        imageSelector: 'img'
-    },
-    {
-        name: 'AnimeUltima (Working)',
-        url: 'https://animeultima.to/latest',
-        selectors: ['.episode-item', '.video-item', '.anime-item', '.item'],
-        titleSelector: '.title, .episode-title, h3, h4',
-        linkSelector: 'a',
-        imageSelector: 'img'
-    },
-    {
-        name: 'AnimeFox (Working)',
-        url: 'https://animefox.tv/latest',
-        selectors: ['.episode-box', '.video-item', '.anime-item', '.item'],
-        titleSelector: '.title, .episode-title, h3, h4',
-        linkSelector: 'a',
-        imageSelector: 'img'
-    }
-];
-
-// Custom fetch with better headers
-function fetchUrl(url) {
+// 🔥 WORKING ANIME APIS (No Cloudflare!)
+async function fetchFromAPI(url) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
-        const isHttps = urlObj.protocol === 'https:';
-        const client = isHttps ? https : http;
-        
         const options = {
             hostname: urlObj.hostname,
-            port: urlObj.port || (isHttps ? 443 : 80),
+            port: 443,
             path: urlObj.pathname + urlObj.search,
             method: 'GET',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'max-age=0',
-                'Referer': 'https://www.google.com/',
-                'DNT': '1'
-            },
-            timeout: 30000
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json'
+            }
         };
         
-        const req = client.request(options, (res) => {
-            const chunks = [];
-            
-            res.on('data', (chunk) => {
-                chunks.push(chunk);
-            });
-            
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
             res.on('end', () => {
-                let buffer = Buffer.concat(chunks);
-                
-                const encoding = res.headers['content-encoding'];
-                if (encoding === 'gzip') {
-                    zlib.gunzip(buffer, (err, decoded) => {
-                        if (err) reject(err);
-                        else resolve(decoded.toString());
-                    });
-                } else if (encoding === 'deflate') {
-                    zlib.inflate(buffer, (err, decoded) => {
-                        if (err) reject(err);
-                        else resolve(decoded.toString());
-                    });
-                } else {
-                    resolve(buffer.toString());
+                try {
+                    resolve(JSON.parse(data));
+                } catch (e) {
+                    reject(e);
                 }
             });
         });
-        
         req.on('error', reject);
-        req.on('timeout', () => {
-            req.destroy();
-            reject(new Error('Request timeout'));
-        });
-        
         req.end();
     });
 }
 
-// Fetch with retry
-async function fetchWithRetry(url, retries = 3) {
-    for (let i = 0; i < retries; i++) {
-        try {
-            console.log(`📡 Attempt ${i + 1}`);
-            const data = await fetchUrl(url);
-            if (data.length > 1000) {
-                console.log(`✅ Success (${data.length} bytes)`);
-                return data;
-            } else {
-                console.log(`⚠️ Got ${data.length} bytes`);
-                if (i === retries - 1) throw new Error('Empty response');
-            }
-        } catch (error) {
-            console.log(`❌ Attempt ${i + 1} failed: ${error.message}`);
-            if (i === retries - 1) throw error;
-            await new Promise(resolve => setTimeout(resolve, 3000 * (i + 1)));
-        }
-    }
-}
-
-// Scrape a single site
-async function scrapeSite(site) {
-    console.log(`\n🌐 Scraping ${site.name}: ${site.url}`);
+// Get anime from Jikan API (MyAnimeList)
+async function getAnimeFromJikan() {
+    console.log('📡 Fetching from Jikan API...');
     
     try {
-        const html = await fetchWithRetry(site.url);
-        const $ = cheerio.load(html);
+        // Get top anime
+        const response = await fetchFromAPI('https://api.jikan.moe/v4/top/anime?limit=25');
         const episodes = [];
         
-        // Try all selectors
-        for (const selector of site.selectors) {
-            const elements = $(selector);
-            if (elements.length > 0) {
-                console.log(`✅ Found ${elements.length} items with selector: ${selector}`);
-                
-                elements.each((i, element) => {
-                    const $el = $(element);
-                    
-                    let title = $el.find(site.titleSelector).first().text().trim();
-                    let link = $el.find(site.linkSelector).attr('href') || $el.attr('href');
-                    let image = $el.find(site.imageSelector).attr('src') || 
-                                $el.find(site.imageSelector).attr('data-src');
-                    
-                    if (!title) {
-                        title = $el.text().trim().split('\n')[0].trim();
-                    }
-                    
-                    if (link && !link.startsWith('http')) {
-                        const baseUrl = site.url.endsWith('/') ? site.url.slice(0, -1) : site.url;
-                        link = link.startsWith('/') ? baseUrl + link : baseUrl + '/' + link;
-                    }
-                    
-                    if (title || link) {
-                        episodes.push({
-                            id: episodes.length + 1,
-                            title: title || `Episode ${episodes.length + 1}`,
-                            episode: episodes.length + 1,
-                            description: $el.find('.description, .synopsis, .summary, .desc, p').text().trim() || 'No description available',
-                            image: image ? (image.startsWith('http') ? image : `${site.url}${image}`) : null,
-                            link: link || null,
-                            quality: $el.find('.quality, .hd, .resolution, .q').text().trim() || 'HD',
-                            type: $el.find('.type, .sub, .dub, .lang').text().trim() || 'Subbed',
-                            rating: $el.find('.rating, .score, .rate').text().trim() || 'N/A',
-                            releaseDate: $el.find('.release-date, .date, .time').text().trim() || new Date().toISOString().split('T')[0],
-                            timestamp: new Date().toISOString(),
-                            season: 'Season 1',
-                            studio: 'Unknown',
-                            genres: [],
-                            source: site.name
-                        });
-                    }
+        if (response.data) {
+            response.data.forEach((anime, index) => {
+                episodes.push({
+                    id: index + 1,
+                    title: anime.title,
+                    episode: index + 1,
+                    description: anime.synopsis || 'No description available',
+                    image: anime.images?.jpg?.image_url || null,
+                    link: anime.url || null,
+                    quality: 'HD',
+                    type: anime.type || 'TV',
+                    rating: anime.score ? anime.score.toString() : 'N/A',
+                    releaseDate: anime.aired?.from ? new Date(anime.aired.from).toISOString().split('T')[0] : 'Unknown',
+                    timestamp: new Date().toISOString(),
+                    season: 'Latest',
+                    studio: anime.studios?.[0]?.name || 'Unknown',
+                    genres: anime.genres?.map(g => g.name) || [],
+                    source: 'MyAnimeList (Jikan API)'
                 });
-                
-                if (episodes.length > 0) break;
-            }
-        }
-        
-        // Aggressive fallback
-        if (episodes.length === 0) {
-            console.log(`🔄 Trying aggressive fallback for ${site.name}...`);
-            
-            $('a').each((i, element) => {
-                const $el = $(element);
-                const href = $el.attr('href');
-                const text = $el.text().trim();
-                
-                if (href && (href.includes('/episode') || href.includes('/watch') || href.includes('/video') || href.includes('/anime'))) {
-                    const title = text || `Episode ${episodes.length + 1}`;
-                    
-                    if (!episodes.find(e => e.link === href)) {
-                        const baseUrl = site.url.endsWith('/') ? site.url.slice(0, -1) : site.url;
-                        const link = href.startsWith('http') ? href : (href.startsWith('/') ? baseUrl + href : baseUrl + '/' + href);
-                        
-                        episodes.push({
-                            id: episodes.length + 1,
-                            title: title,
-                            episode: episodes.length + 1,
-                            description: 'No description available',
-                            image: null,
-                            link: link,
-                            quality: 'HD',
-                            type: 'Subbed',
-                            rating: 'N/A',
-                            releaseDate: new Date().toISOString().split('T')[0],
-                            timestamp: new Date().toISOString(),
-                            season: 'Season 1',
-                            studio: 'Unknown',
-                            genres: [],
-                            source: site.name
-                        });
-                    }
-                }
             });
         }
         
-        console.log(`✅ ${site.name}: Found ${episodes.length} episodes`);
+        console.log(`✅ Found ${episodes.length} anime from Jikan API`);
         return episodes;
         
     } catch (error) {
-        console.log(`❌ ${site.name} failed: ${error.message}`);
+        console.error('❌ Jikan API failed:', error.message);
         return [];
     }
 }
 
-// Scrape ALL sites
+// Get anime from Kitsu API
+async function getAnimeFromKitsu() {
+    console.log('📡 Fetching from Kitsu API...');
+    
+    try {
+        const response = await fetchFromAPI('https://kitsu.io/api/edge/anime?page[limit]=20');
+        const episodes = [];
+        
+        if (response.data) {
+            response.data.forEach((item, index) => {
+                const attributes = item.attributes;
+                episodes.push({
+                    id: index + 1,
+                    title: attributes.canonicalTitle || 'Unknown',
+                    episode: index + 1,
+                    description: attributes.synopsis || 'No description available',
+                    image: attributes.posterImage?.original || null,
+                    link: `https://kitsu.io/anime/${item.id}`,
+                    quality: 'HD',
+                    type: attributes.showType || 'TV',
+                    rating: attributes.averageRating ? (parseFloat(attributes.averageRating) / 10).toFixed(1) : 'N/A',
+                    releaseDate: attributes.startDate || 'Unknown',
+                    timestamp: new Date().toISOString(),
+                    season: 'Latest',
+                    studio: 'Unknown',
+                    genres: attributes.categories?.map(c => c.name) || [],
+                    source: 'Kitsu API'
+                });
+            });
+        }
+        
+        console.log(`✅ Found ${episodes.length} anime from Kitsu API`);
+        return episodes;
+        
+    } catch (error) {
+        console.error('❌ Kitsu API failed:', error.message);
+        return [];
+    }
+}
+
+// Get anime from AniList (GraphQL)
+async function getAnimeFromAniList() {
+    console.log('📡 Fetching from AniList API...');
+    
+    try {
+        const query = JSON.stringify({
+            query: `
+                query {
+                    Page(page: 1, perPage: 20) {
+                        media(type: ANIME, sort: POPULARITY_DESC) {
+                            title { romaji english }
+                            description
+                            coverImage { large }
+                            episodes
+                            averageScore
+                            startDate { year month day }
+                            studios { nodes { name } }
+                            genres
+                            siteUrl
+                        }
+                    }
+                }
+            `
+        });
+        
+        const url = new URL('https://graphql.anilist.co');
+        const options = {
+            hostname: url.hostname,
+            port: 443,
+            path: url.pathname,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0'
+            }
+        };
+        
+        const result = await new Promise((resolve, reject) => {
+            const req = https.request(options, (res) => {
+                let data = '';
+                res.on('data', (chunk) => data += chunk);
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(data));
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.write(query);
+            req.end();
+        });
+        
+        const episodes = [];
+        if (result.data?.Page?.media) {
+            result.data.Page.media.forEach((anime, index) => {
+                const title = anime.title?.english || anime.title?.romaji || 'Unknown';
+                const date = anime.startDate ? 
+                    `${anime.startDate.year}-${String(anime.startDate.month).padStart(2, '0')}-${String(anime.startDate.day).padStart(2, '0')}` : 
+                    'Unknown';
+                
+                episodes.push({
+                    id: index + 1,
+                    title: title,
+                    episode: anime.episodes || index + 1,
+                    description: (anime.description || 'No description available').replace(/<[^>]*>/g, ''),
+                    image: anime.coverImage?.large || null,
+                    link: anime.siteUrl || null,
+                    quality: 'HD',
+                    type: 'TV',
+                    rating: anime.averageScore ? (anime.averageScore / 10).toFixed(1) : 'N/A',
+                    releaseDate: date,
+                    timestamp: new Date().toISOString(),
+                    season: 'Latest',
+                    studio: anime.studios?.nodes?.[0]?.name || 'Unknown',
+                    genres: anime.genres || [],
+                    source: 'AniList API'
+                });
+            });
+        }
+        
+        console.log(`✅ Found ${episodes.length} anime from AniList API`);
+        return episodes;
+        
+    } catch (error) {
+        console.error('❌ AniList API failed:', error.message);
+        return [];
+    }
+}
+
+// Scrape ALL sources
 async function scrapeFullDetails() {
-    console.log('🔄 Starting multi-site scrape at:', new Date().toISOString());
-    console.log(`🌐 Will scrape ${ANIME_SITES.length} working sites`);
+    console.log('🔄 Starting API scrape at:', new Date().toISOString());
+    console.log('📡 Using official anime APIs (No Cloudflare!)');
     
     try {
         let allEpisodes = [];
         const siteResults = {};
         
-        for (const site of ANIME_SITES) {
-            const episodes = await scrapeSite(site);
-            siteResults[site.name] = episodes.length;
-            allEpisodes = allEpisodes.concat(episodes);
-            await new Promise(resolve => setTimeout(resolve, 2000));
-        }
+        // Get from Jikan
+        const jikanEpisodes = await getAnimeFromJikan();
+        siteResults['MyAnimeList (Jikan)'] = jikanEpisodes.length;
+        allEpisodes = allEpisodes.concat(jikanEpisodes);
+        
+        // Get from Kitsu
+        const kitsuEpisodes = await getAnimeFromKitsu();
+        siteResults['Kitsu API'] = kitsuEpisodes.length;
+        allEpisodes = allEpisodes.concat(kitsuEpisodes);
+        
+        // Get from AniList
+        const anilistEpisodes = await getAnimeFromAniList();
+        siteResults['AniList API'] = anilistEpisodes.length;
+        allEpisodes = allEpisodes.concat(anilistEpisodes);
         
         // Remove duplicates
         const seen = new Set();
         const uniqueEpisodes = allEpisodes.filter(ep => {
-            const key = `${ep.title}-${ep.link}`;
+            const key = ep.title.toLowerCase().trim();
             if (seen.has(key)) return false;
             seen.add(key);
             return true;
@@ -268,10 +240,10 @@ async function scrapeFullDetails() {
         
         console.log('\n📊 Summary:');
         for (const [site, count] of Object.entries(siteResults)) {
-            console.log(`  ${site}: ${count} episodes`);
+            console.log(`  ${site}: ${count} anime`);
         }
-        console.log(`\n📊 Total: ${allEpisodes.length} episodes from all sites`);
-        console.log(`📊 Unique: ${uniqueEpisodes.length} unique episodes`);
+        console.log(`\n📊 Total: ${allEpisodes.length} anime from all APIs`);
+        console.log(`📊 Unique: ${uniqueEpisodes.length} unique anime`);
         
         // Save to file
         const dataDir = path.join(__dirname, 'data');
@@ -279,65 +251,12 @@ async function scrapeFullDetails() {
             fs.mkdirSync(dataDir, { recursive: true });
         }
         
-        // If no episodes, create sample data
-        if (uniqueEpisodes.length === 0) {
-            console.log('⚠️ No episodes found. Creating sample data...');
-            const sampleData = {
-                lastUpdated: new Date().toISOString(),
-                totalEpisodes: 15,
-                episodes: [
-                    {
-                        id: 1,
-                        title: "🔥 Sample Episode 1 - Test",
-                        episode: 1,
-                        description: "This is a sample episode. We're testing different sites to get real data.",
-                        image: null,
-                        link: null,
-                        quality: "HD",
-                        type: "Subbed",
-                        rating: "8.5",
-                        releaseDate: new Date().toISOString().split('T')[0],
-                        timestamp: new Date().toISOString(),
-                        season: "Season 1",
-                        studio: "Sample Studio",
-                        genres: ["Action", "Adventure", "Fantasy"],
-                        source: "Sample Data"
-                    },
-                    {
-                        id: 2,
-                        title: "🔥 Sample Episode 2 - Demo",
-                        episode: 2,
-                        description: "We're trying to get real anime data. Please be patient!",
-                        image: null,
-                        link: null,
-                        quality: "HD",
-                        type: "Subbed",
-                        rating: "8.7",
-                        releaseDate: new Date().toISOString().split('T')[0],
-                        timestamp: new Date().toISOString(),
-                        season: "Season 1",
-                        studio: "Sample Studio",
-                        genres: ["Action", "Drama", "Magic"],
-                        source: "Sample Data"
-                    }
-                ],
-                siteStats: siteResults,
-                note: "Using sample data while we find working anime sites. Real data coming soon!"
-            };
-            
-            fs.writeFileSync(
-                path.join(dataDir, 'episodes.json'),
-                JSON.stringify(sampleData, null, 2)
-            );
-            console.log('✅ Saved sample data (15 episodes)');
-            return sampleData;
-        }
-        
         const data = {
             lastUpdated: new Date().toISOString(),
             totalEpisodes: uniqueEpisodes.length,
             episodes: uniqueEpisodes.slice(0, 200),
-            siteStats: siteResults
+            siteStats: siteResults,
+            source: 'Official APIs (No Cloudflare!)'
         };
         
         fs.writeFileSync(
@@ -345,7 +264,9 @@ async function scrapeFullDetails() {
             JSON.stringify(data, null, 2)
         );
         
-        console.log(`\n✅ Saved ${uniqueEpisodes.length} episodes successfully`);
+        console.log(`\n✅ Saved ${uniqueEpisodes.length} anime successfully`);
+        console.log('📌 Note: This is anime data (title, description, image, rating)');
+        console.log('📌 To get actual video links, you need to scrape episode pages separately');
         return data;
         
     } catch (error) {
