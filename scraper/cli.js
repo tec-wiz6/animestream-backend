@@ -23,15 +23,14 @@ async function main() {
     try {
       console.log(`\n📼 Scraping: ${anime.name} (Search: ${anime.id})`);
       
-      // Get episodes
       const episodes = await scrapeAnimeEpisodes(anime.id);
-      
-      // Get video source for first episode
+      let sourceEpisode1 = null;
+
       if (episodes && episodes.length > 0) {
         console.log(`  Testing episode 1 video source...`);
-        const source = await scrapeEpisodeSource(anime.id, 1);
-        console.log(`  📺 Video URL: ${source.url?.substring(0, 80) || 'N/A'}...`);
-        console.log(`  📊 Sources found: ${source.sources?.length || 0}`);
+        sourceEpisode1 = await scrapeEpisodeSource(anime.id, 1);
+        console.log(`  📺 Video URL: ${sourceEpisode1.url?.substring(0, 80) || 'N/A'}...`);
+        console.log(`  📊 Sources found: ${sourceEpisode1.sources?.length || 0}`);
       }
       
       const cacheFile = path.join(CACHE_DIR, `${anime.id.replace(/\s+/g, '-')}.json`);
@@ -40,6 +39,7 @@ async function main() {
         searchTerm: anime.id,
         episodes,
         totalEpisodes: episodes.length,
+        sourceEpisode1,
         lastUpdated: new Date().toISOString(),
         source: 'hianime.ro'
       }, null, 2));
