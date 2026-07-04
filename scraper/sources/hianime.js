@@ -1,6 +1,7 @@
-// scraper/hianime.js
+// scraper/sources/hianime.js
 const cheerio = require('cheerio');
-const fetch = require('node-fetch'); // ensure this is installed in your backend
+const fetch = require('node-fetch');
+const { getEpisodeVideoSourceBrowser } = require('./hianimeBrowser');
 
 const BASE_URL = 'https://hianime.ro';
 
@@ -42,7 +43,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       (i, el) => {
         const href = $(el).attr('href');
         if (!href) return;
-
         if (!href.includes('/watch/')) return;
 
         const match = href.match(/\/watch\/([^-]+(?:-[^-]+)*?)(?:-episode-|$)/);
@@ -146,7 +146,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     ];
 
     let $$ = null;
-    let epUrlUsed = null;
 
     for (const url of episodeUrls) {
       try {
@@ -166,7 +165,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
 
         const epHtml = await epResponse.text();
         $$ = cheerio.load(epHtml);
-        epUrlUsed = url;
         console.log(`  ✅ Found episode list at: ${url}`);
         break;
       } catch (e) {
@@ -180,11 +178,34 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       return generateMockData(animeId, episodeNum);
     }
 
-    // If frontend asked for a specific episode source:
+    // ============================================================
+    // IF A SPECIFIC EPISODE SOURCE WAS REQUESTED
+    // ============================================================
     if (episodeNum) {
       console.log(`  Testing episode ${episodeNum} video source...`);
-      const video = await getEpisodeVideoSource(animeSlug, episodeNum);
-      return video;
+
+      // First try static HTML extraction
+      const staticSource = await getEpisodeVideoSource(animeSlug, episodeNum);
+
+      const onlyWatchUrl =
+        !staticSource ||
+        staticSource.fallback ||
+        (staticSource.sources &&
+          staticSource.sources.length === 1 &&
+          staticSource.sources[0].url === staticSource.watchUrl);
+
+      if (onlyWatchUrl) {
+        console.log(
+          '  ⚠️ Static HTML source looks like fallback, trying browser (Puppeteer)...'
+        );
+        const browserSource = await getEpisodeVideoSourceBrowser(
+          animeSlug,
+          episodeNum
+        );
+        return browserSource;
+      }
+
+      return staticSource;
     }
 
     // ============================================================
@@ -287,7 +308,7 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
 }
 
 // ============================================================
-// GET ACTUAL VIDEO SOURCE FROM WATCH PAGE (IMPROVED)
+// STATIC HTML VIDEO SOURCE EXTRACTION (KEPT AS FIRST TRY)
 // ============================================================
 async function getEpisodeVideoSource(animeSlug, episodeNum) {
   const watchUrl = `${BASE_URL}/watch/${animeSlug}-episode-${episodeNum}`;
@@ -316,7 +337,6 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
 
     const videoSources = [];
 
-    // Helper: skip obvious tracking/non-video URLs
     const isTrackingUrl = (url) => {
       if (!url) return true;
       const blocked = [
@@ -342,9 +362,7 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       return blocked.some((b) => url.toLowerCase().includes(b));
     };
 
-    // ============================================================
     // METHOD 1: Specific player iframes
-    // ============================================================
     $('.player iframe, .video-player iframe, #player iframe, .embed-player iframe, .jwplayer iframe').each(
       (i, el) => {
         const src = $(el).attr('src') || $(el).attr('data-src');
@@ -362,9 +380,7 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       }
     );
 
-    // ============================================================
     // METHOD 2: Any iframe that looks like video
-    // ============================================================
     if (videoSources.length === 0) {
       $('iframe').each((i, el) => {
         const src = $(el).attr('src') || $(el).attr('data-src');
@@ -373,13 +389,14 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
 
         const cleanSrc = src.startsWith('//') ? `https:${src}` : src;
 
+        const s = cleanSrc.toLowerCase();
         if (
-          cleanSrc.includes('/embed/') ||
-          cleanSrc.includes('/v/') ||
-          cleanSrc.toLowerCase().includes('player') ||
-          cleanSrc.toLowerCase().includes('video') ||
-          cleanSrc.toLowerCase().includes('stream') ||
-          cleanSrc.toLowerCase().includes('gogo')
+          s.includes('/embed/') ||
+          s.includes('/v/') ||
+          s.includes('player') ||
+          s.includes('video') ||
+          s.includes('stream') ||
+          s.includes('gogo')
         ) {
           console.log(
             `  ✅ Found generic video iframe: ${cleanSrc.substring(0, 100)}...`
@@ -392,9 +409,7 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       });
     }
 
-    // ============================================================
     // METHOD 3: Video URLs inside script tags
-    // ============================================================
     if (videoSources.length === 0) {
       const scripts = $('script')
         .map((i, el) => $(el).html())
@@ -430,9 +445,7 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       }
     }
 
-    // ============================================================
     // METHOD 4: <video><source> tags
-    // ============================================================
     if (videoSources.length === 0) {
       $('video source').each((i, el) => {
         const src = $(el).attr('src');
@@ -449,9 +462,7 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       });
     }
 
-    // ============================================================
     // METHOD 5: Player container data attributes / inner HTML
-    // ============================================================
     if (videoSources.length === 0) {
       const playerSelectors = [
         '.player-container',
@@ -484,10 +495,10 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
           break;
         }
 
-        const html = player.html();
-        if (!html) continue;
+        const inner = player.html();
+        if (!inner) continue;
 
-        const match = html.match(
+        const match = inner.match(
           /https?:\/\/[^"'\s]+\.(m3u8|mp4)[^"'\s]*/i
         );
         if (match && !isTrackingUrl(match[0])) {
@@ -503,9 +514,7 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       }
     }
 
-    // ============================================================
     // METHOD 6: Extra domain-based patterns
-    // ============================================================
     if (videoSources.length === 0) {
       const scripts = $('script')
         .map((i, el) => $(el).html())
@@ -538,9 +547,7 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       }
     }
 
-    // ============================================================
     // FINAL SELECTION
-    // ============================================================
     if (videoSources.length > 0) {
       const uniqueSources = [];
       const seen = new Set();
