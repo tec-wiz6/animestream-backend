@@ -1,12 +1,33 @@
 {
-  "lastUpdated": "2026-07-04T00:11:16.785Z",
-  "totalEpisodes": 0,
-  "episodes": [],
+  "lastUpdated": "2026-07-04T00:18:23.594Z",
+  "totalEpisodes": 10,
+  "episodes": [
+    {
+      "id": 1,
+      "title": "Sample Episode 1 - Testing",
+      "episode": 1,
+      "description": "Sample episode. Working on getting real data.",
+      "image": null,
+      "link": null,
+      "quality": "HD",
+      "type": "Subbed",
+      "rating": "N/A",
+      "releaseDate": "2026-07-04",
+      "timestamp": "2026-07-04T00:18:23.594Z",
+      "season": "Season 1",
+      "studio": "Sample",
+      "genres": [
+        "Action"
+      ],
+      "source": "Sample"
+    }
+  ],
   "siteStats": {
-    "GoGoAnime": 0,
-    "AnimeFox": 0,
-    "9Anime": 0,
-    "Zoro": 0,
-    "AnimeSuge": 0
-  }
+    "AnimePahe (PW)": 0,
+    "AnimePahe (RU)": 0,
+    "AnimePahe (COM)": 0,
+    "AnimePahe (ORG)": 0,
+    "AnimePahe (NET)": 0
+  },
+  "note": "Trying all AnimePahe domains. One of them should work!"
 }
