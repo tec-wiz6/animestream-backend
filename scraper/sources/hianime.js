@@ -6,7 +6,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
   try {
     console.log(`🔍 Searching for: ${animeId}`);
     
-    // Fix: Use ?s= instead of /search?keyword=
     const searchUrl = `${baseUrl}/?s=${encodeURIComponent(animeId)}`;
     console.log(`  Searching: ${searchUrl}`);
     
@@ -28,61 +27,100 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     const data = await response.text();
     const $ = cheerio.load(data);
     
-    // Find the first anime result - look for .film-poster or similar
-    let animeSlug = null;
-    let animeTitle = null;
+    // Find ALL anime results
+    let animeResults = [];
     
-    // Try different selectors for hianime.ro
-    const selectors = [
-      '.film-poster a',
-      '.poster a',
-      '.thumb a',
-      '.film-list .film-poster a',
-      '.anime-item a',
-      '.movie-item a'
-    ];
-    
-    for (const selector of selectors) {
-      const result = $(selector).first();
-      if (result.length > 0) {
-        const href = result.attr('href');
-        console.log(`  Found link: ${href}`);
-        
-        // Extract anime slug from the watch URL
-        // Example: /watch/naruto-shippuuden-movie-3-inheritors-of-will-of-fire-episode-1-24453/
-        // We need to get the base anime slug (before -episode-)
-        const match = href?.match(/\/watch\/([^-]+(?:-[^-]+)*?)(?:-episode-|$)/);
+    $('.film-poster a, .poster a, .thumb a, .film-list .film-poster a, .anime-item a, .movie-item a').each((i, el) => {
+      const href = $(el).attr('href');
+      if (href && href.includes('/watch/')) {
+        const match = href.match(/\/watch\/([^-]+(?:-[^-]+)*?)(?:-episode-|$)/);
         if (match) {
-          animeSlug = match[1];
-          console.log(`  Extracted slug: ${animeSlug}`);
+          // Get the title text for better matching
+          const title = $(el).find('img').attr('alt') || $(el).find('.title').text() || $(el).text().trim();
+          animeResults.push({
+            slug: match[1],
+            href: href,
+            title: title
+          });
+        }
+      }
+    });
+    
+    if (animeResults.length === 0) {
+      console.log(`⚠️ No anime found for: ${animeId}`);
+      return generateMockData(animeId, episodeNum);
+    }
+    
+    // Log all found results
+    console.log(`  Found ${animeResults.length} results:`);
+    animeResults.forEach((r, i) => {
+      console.log(`    ${i + 1}. ${r.title || r.slug}`);
+    });
+    
+    // Pick the BEST match - prefer main series over movies/specials
+    let bestMatch = null;
+    
+    // Keywords that indicate it's a main series (not a movie or special)
+    const mainSeriesKeywords = ['season', 'part', 'arc', 'series'];
+    const movieKeywords = ['movie', 'film', 'special', 'ova', 'oad'];
+    
+    // First try: find one that has the search term in the title (case insensitive)
+    const searchLower = animeId.toLowerCase();
+    for (const result of animeResults) {
+      const titleLower = (result.title || '').toLowerCase();
+      // Prefer results that exactly match or contain the search term
+      if (titleLower.includes(searchLower) || titleLower.includes(searchLower.replace(/ /g, ''))) {
+        // Skip movies if possible
+        const isMovie = movieKeywords.some(k => titleLower.includes(k));
+        if (!isMovie) {
+          bestMatch = result;
+          console.log(`  ✅ Selected main series: ${result.title}`);
           break;
         }
       }
     }
     
-    // If still no slug, look for any link with /watch/
-    if (!animeSlug) {
-      $('a[href*="/watch/"]').each((i, el) => {
-        if (!animeSlug) {
-          const href = $(el).attr('href');
-          const match = href?.match(/\/watch\/([^-]+(?:-[^-]+)*?)(?:-episode-|$)/);
-          if (match) {
-            animeSlug = match[1];
-            console.log(`  Found slug from watch link: ${animeSlug}`);
+    // If no good match, try to find one with the most episodes
+    if (!bestMatch) {
+      // Check which one has the most episodes (by looking at the episode count in the URL or title)
+      let maxEpisodes = 0;
+      for (const result of animeResults) {
+        // Extract episode count from title if possible
+        const titleLower = (result.title || '').toLowerCase();
+        const epMatch = titleLower.match(/(\d+)\s*episodes?/);
+        if (epMatch) {
+          const epCount = parseInt(epMatch[1]);
+          if (epCount > maxEpisodes) {
+            maxEpisodes = epCount;
+            bestMatch = result;
           }
         }
-      });
+      }
+      
+      // If still no best match, just take the first one that's not a movie
+      if (!bestMatch) {
+        for (const result of animeResults) {
+          const titleLower = (result.title || '').toLowerCase();
+          const isMovie = movieKeywords.some(k => titleLower.includes(k));
+          if (!isMovie) {
+            bestMatch = result;
+            console.log(`  ✅ Selected: ${result.title} (first non-movie)`);
+            break;
+          }
+        }
+      }
+      
+      // Last resort: first result
+      if (!bestMatch) {
+        bestMatch = animeResults[0];
+        console.log(`  ⚠️ Using first result: ${bestMatch.title || bestMatch.slug}`);
+      }
     }
     
-    if (!animeSlug) {
-      console.log(`⚠️ No anime found for: ${animeId}`);
-      return generateMockData(animeId, episodeNum);
-    }
+    const animeSlug = bestMatch.slug;
+    console.log(`📺 Final anime slug: ${animeSlug}`);
     
-    console.log(`📺 Found anime slug: ${animeSlug}`);
-    
-    // Now get the episode list for this anime
-    // The URL format might be /category/[anime-slug] or /anime/[anime-slug]
+    // Now get the episode list
     const episodeUrls = [
       `${baseUrl}/category/${animeSlug}`,
       `${baseUrl}/anime/${animeSlug}`,
@@ -94,7 +132,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     
     for (const url of episodeUrls) {
       try {
-        console.log(`  Trying episode list: ${url}`);
         const epResponse = await fetch(url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -122,17 +159,21 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       return await getEpisodeSource($$, animeSlug, episodeNum, baseUrl);
     }
     
-    // Extract all episodes
+    // Extract all episodes - look for ALL episode links on the page
     const episodes = [];
+    
+    // More comprehensive episode selectors
     const episodeSelectors = [
       '.episodes a',
       '.episode-list a',
-      '.ep-list a',
+      '.ep-list a', 
       '.eps a',
       '.list-episode a',
       '.episode-item a',
       '.episodes .ep-item a',
-      '.episodes .episode-item a'
+      '.episodes .episode-item a',
+      '.episode a',
+      '.ep a'
     ];
     
     let episodeLinks = [];
@@ -140,7 +181,7 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       const links = $$(selector);
       if (links.length > 0) {
         episodeLinks = links;
-        console.log(`  Found ${links.length} episodes using selector: ${selector}`);
+        console.log(`  Found ${links.length} episode links using selector: ${selector}`);
         break;
       }
     }
@@ -179,13 +220,11 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       const href = $$(el).attr('href');
       const title = $$(el).text().trim() || $$(el).attr('title') || `Episode ${i + 1}`;
       
-      // Try to extract episode number from href or text
       let epNum = null;
       const match = href?.match(/episode-(\d+)/);
       if (match) {
         epNum = parseInt(match[1]);
       } else {
-        // Try to extract from text
         const textMatch = title.match(/\d+/);
         if (textMatch) {
           epNum = parseInt(textMatch[0]);
