@@ -2,14 +2,14 @@ name: Scrape Anime Data
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Run daily at midnight
+    - cron: '0 */6 * * *'  # Run every 6 hours
   workflow_dispatch:  # Manual trigger
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v3
         
       - name: Setup Node.js
@@ -18,9 +18,23 @@ jobs:
           node-version: '18'
           
       - name: Install dependencies
-        run: npm install
+        run: npm ci
         
       - name: Run scraper
         run: npm run scrape
-        env:
-          API_URL: ${{ secrets.API_URL }}
+        
+      - name: Upload cache as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: anime-cache
+          path: cache/
+          
+      - name: Deploy cache to Vercel
+        run: |
+          # You can add logic here to update your API's cache
+          # For example, commit and push the cache files
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add cache/
+          git diff --staged --quiet || git commit -m "Update anime cache [skip ci]"
+          git push
