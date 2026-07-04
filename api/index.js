@@ -1,13 +1,34 @@
 const express = require('express');
 const cors = require('cors');
 const NodeCache = require('node-cache');
-const { scrapeAnimeEpisodes, scrapeEpisodeSource } = require('../scraper');
+const fs = require('fs');
+const path = require('path');
+
+const { scrapeAnimeEpisodes } = require('../scraper');
 
 const app = express();
 const cache = new NodeCache({ stdTTL: 3600 });
 
 app.use(cors());
 app.use(express.json());
+
+const CACHE_DIR = path.join(__dirname, '../cache');
+
+function getCacheFilePath(id) {
+  return path.join(CACHE_DIR, `${String(id).replace(/\s+/g, '-')}.json`);
+}
+
+function readAnimeCache(id) {
+  const filePath = getCacheFilePath(id);
+  if (!fs.existsSync(filePath)) return null;
+
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (error) {
+    return null;
+  }
+}
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -22,7 +43,13 @@ app.get('/api/anime/:id/episodes', async (req, res) => {
     
     let episodes = cache.get(cacheKey);
     if (episodes) {
-      return res.json({ episodes, cached: true, source: 'cache' });
+      return res.json({ episodes, cached: true, source: 'memory-cache' });
+    }
+
+    const fileData = readAnimeCache(id);
+    if (fileData?.episodes?.length) {
+      cache.set(cacheKey, fileData.episodes);
+      return res.json({ episodes: fileData.episodes, cached: true, source: 'file-cache' });
     }
 
     episodes = await scrapeAnimeEpisodes(id);
@@ -39,17 +66,25 @@ app.get('/api/anime/:id/episodes', async (req, res) => {
 app.get('/api/anime/:id/episode/:num', async (req, res) => {
   try {
     const { id, num } = req.params;
-    const cacheKey = `episode_${id}_${num}`;
-    
+    const episodeNum = parseInt(num, 10);
+
+    const cacheKey = `episode_${id}_${episodeNum}`;
     let videoSource = cache.get(cacheKey);
     if (videoSource) {
-      return res.json({ ...videoSource, cached: true });
+      return res.json({ ...videoSource, cached: true, source: 'memory-cache' });
     }
 
-    videoSource = await scrapeEpisodeSource(id, parseInt(num));
-    cache.set(cacheKey, videoSource);
-    
-    res.json({ ...videoSource, cached: false });
+    const fileData = readAnimeCache(id);
+    if (fileData?.sourceEpisode1 && episodeNum === 1) {
+      const source = fileData.sourceEpisode1;
+      cache.set(cacheKey, source);
+      return res.json({ ...source, cached: true, source: 'file-cache' });
+    }
+
+    return res.status(404).json({
+      error: 'Episode source not available in cache',
+      message: 'Run the GitHub Action scraper to populate sourceEpisode1 first.'
+    });
   } catch (error) {
     console.error('Error fetching episode source:', error);
     res.status(500).json({ error: 'Failed to fetch episode source' });
@@ -83,5 +118,4 @@ app.get('/', (req, res) => {
   });
 });
 
-// For Vercel - export the app
 module.exports = app;
