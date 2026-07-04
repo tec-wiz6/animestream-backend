@@ -7,15 +7,13 @@ if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
 
-// List of popular anime to scrape from hianime.ro
+// Use search terms instead of slugs - the scraper will find the correct slug
 const ANIME_LIST = [
   { id: 'naruto', name: 'Naruto' },
-  { id: 'onepiece', name: 'One Piece' },
-  { id: 'demonslayer', name: 'Demon Slayer' },
-  { id: 'jujutsukaisen', name: 'Jujutsu Kaisen' },
-  { id: 'aot', name: 'Attack on Titan' },
-  // Add more anime IDs here
-  // You can find the ID from the URL: hianime.ro/anime/[ID]
+  { id: 'one piece', name: 'One Piece' },  // Use space for search
+  { id: 'demon slayer', name: 'Demon Slayer' },  // Use actual title
+  { id: 'jujutsu kaisen', name: 'Jujutsu Kaisen' },
+  { id: 'attack on titan', name: 'Attack on Titan' },
 ];
 
 async function main() {
@@ -24,34 +22,36 @@ async function main() {
   
   for (const anime of ANIME_LIST) {
     try {
-      console.log(`📼 Scraping: ${anime.name} (ID: ${anime.id})`);
+      console.log(`📼 Scraping: ${anime.name} (Search: ${anime.id})`);
       
       const episodes = await scrapeAnimeEpisodes(anime.id);
       
       if (episodes && episodes.length > 0) {
-        // Save to cache
-        const cacheFile = path.join(CACHE_DIR, `${anime.id}.json`);
-        fs.writeFileSync(cacheFile, JSON.stringify({
-          anime: anime.name,
-          id: anime.id,
-          episodes,
-          totalEpisodes: episodes.length,
-          lastUpdated: new Date().toISOString(),
-          source: 'hianime.ro'
-        }, null, 2));
-        
-        console.log(`✅ Saved ${episodes.length} episodes for ${anime.name}`);
-        console.log(`💾 Cache: ${cacheFile}\n`);
-      } else {
-        console.log(`⚠️ No episodes found for ${anime.name}\n`);
+        // Check if it's real data (has real URLs)
+        const isRealData = episodes.some(ep => ep.url && !ep.url.includes('example.com'));
+        console.log(`  📊 Data type: ${isRealData ? 'REAL' : 'MOCK'}`);
+        console.log(`  📝 First episode URL: ${episodes[0]?.url || 'N/A'}`);
       }
       
-      // Small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      const cacheFile = path.join(CACHE_DIR, `${anime.id.replace(/\s+/g, '-')}.json`);
+      fs.writeFileSync(cacheFile, JSON.stringify({
+        anime: anime.name,
+        searchTerm: anime.id,
+        episodes,
+        totalEpisodes: episodes.length,
+        lastUpdated: new Date().toISOString(),
+        source: 'hianime.ro'
+      }, null, 2));
+      
+      console.log(`✅ Saved ${episodes.length} episodes for ${anime.name}`);
+      console.log(`💾 Cache: ${cacheFile}\n`);
+      
+      // Wait between requests to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 3000));
       
     } catch (error) {
       console.error(`❌ Failed to scrape ${anime.name}:`, error.message);
-      console.log('Continuing to next anime...\n');
+      console.log('Continuing...\n');
     }
   }
   
