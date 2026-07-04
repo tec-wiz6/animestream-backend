@@ -27,7 +27,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     const data = await response.text();
     const $ = cheerio.load(data);
     
-    // Find ALL anime results with titles
     let animeResults = [];
     
     $('.film-poster a, .poster a, .thumb a, .film-list .film-poster a, .anime-item a, .movie-item a').each((i, el) => {
@@ -42,7 +41,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
           const titleLower = (title || '').toLowerCase();
           const isMovie = titleLower.includes('movie') || titleLower.includes('film') || titleLower.includes('special');
           const isSeason = titleLower.includes('season') || titleLower.includes('part') || titleLower.includes('arc');
-          const isMain = !isMovie && !isSeason;
           
           animeResults.push({
             slug: slug,
@@ -50,7 +48,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
             title: title,
             isMovie: isMovie,
             isSeason: isSeason,
-            isMain: isMain,
             slugLength: slug.length
           });
         }
@@ -62,14 +59,12 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       return generateMockData(animeId, episodeNum);
     }
     
-    // Log all results
     console.log(`  Found ${animeResults.length} results:`);
     animeResults.slice(0, 10).forEach((r, i) => {
       const type = r.isMovie ? '🎬 MOVIE' : r.isSeason ? '📺 SEASON' : '⭐ MAIN';
       console.log(`    ${i + 1}. ${r.title || r.slug} ${type}`);
     });
     
-    // Score and pick the best match
     const searchLower = animeId.toLowerCase();
     const searchWords = searchLower.split(' ');
     
@@ -102,7 +97,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     console.log(`📺 Selected: ${bestMatch.title || animeSlug} (score: ${bestMatch.score})`);
     console.log(`📺 Final anime slug: ${animeSlug}`);
     
-    // Get episode list
     const episodeUrls = [
       `${baseUrl}/category/${animeSlug}`,
       `${baseUrl}/anime/${animeSlug}`,
@@ -110,7 +104,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     ];
     
     let $$ = null;
-    let episodePage = null;
     
     for (const url of episodeUrls) {
       try {
@@ -123,7 +116,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
         if (epResponse.ok) {
           const epData = await epResponse.text();
           $$ = cheerio.load(epData);
-          episodePage = url;
           console.log(`  ✅ Found episode list at: ${url}`);
           break;
         }
@@ -137,12 +129,10 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       return generateMockData(animeId, episodeNum);
     }
     
-    // If specific episode requested, get video source
     if (episodeNum) {
       return await getEpisodeVideoSource($$, animeSlug, episodeNum, baseUrl);
     }
     
-    // Extract all episodes
     const episodes = [];
     const episodeSelectors = [
       '.episodes a',
@@ -184,7 +174,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       
       if (episodes.length > 0) {
         episodes.sort((a, b) => a.number - b.number);
-        console.log(`  ✅ Found ${episodes.length} episodes from links`);
         return episodes;
       }
       
@@ -255,13 +244,27 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
     let videoSources = [];
     
     // ============================================================
+    // SKIP TRACKING/ANALYTICS URLS
+    // ============================================================
+    const isTrackingUrl = (url) => {
+      if (!url) return true;
+      const blocked = [
+        'track', 'analytics', 'telemetry', 'stats', 
+        'wp-json', 'otakuthemes', 'views', 'api',
+        '.jpg', '.png', '.gif', '.webp', '.svg',
+        'google-analytics', 'gtag', 'facebook', 'twitter'
+      ];
+      return blocked.some(b => url.toLowerCase().includes(b));
+    };
+    
+    // ============================================================
     // METHOD 1: Look for the player iframe with data-src attribute
     // ============================================================
-    $$('.player iframe, .video-player iframe, #player iframe, .embed-player iframe').each((i, el) => {
+    $$('.player iframe, .video-player iframe, #player iframe, .embed-player iframe, .jwplayer iframe').each((i, el) => {
       const src = $$(el).attr('src') || $$(el).attr('data-src');
-      if (src && !src.includes('google') && !src.includes('facebook') && !src.includes('twitter')) {
+      if (src && !isTrackingUrl(src)) {
         const cleanSrc = src.startsWith('//') ? `https:${src}` : src;
-        console.log(`  ✅ Found player iframe: ${cleanSrc.substring(0, 60)}...`);
+        console.log(`  ✅ Found player iframe: ${cleanSrc.substring(0, 80)}...`);
         videoSources.push({
           quality: 'HD',
           url: cleanSrc
@@ -275,14 +278,13 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
     if (videoSources.length === 0) {
       $$('iframe').each((i, el) => {
         const src = $$(el).attr('src') || $$(el).attr('data-src');
-        if (src) {
+        if (src && !isTrackingUrl(src)) {
           const cleanSrc = src.startsWith('//') ? `https:${src}` : src;
-          // Skip known non-video domains
-          const skipDomains = ['google', 'facebook', 'twitter', 'disqus', 'analytics', 'tracking', 'doubleclick'];
-          const shouldSkip = skipDomains.some(domain => cleanSrc.includes(domain));
-          
-          if (!shouldSkip && cleanSrc.includes('/embed/') || cleanSrc.includes('/v/') || cleanSrc.includes('player')) {
-            console.log(`  ✅ Found video iframe: ${cleanSrc.substring(0, 60)}...`);
+          // Check if it's likely a video iframe
+          if (cleanSrc.includes('/embed/') || cleanSrc.includes('/v/') || 
+              cleanSrc.includes('player') || cleanSrc.includes('video') ||
+              cleanSrc.includes('gogo') || cleanSrc.includes('stream')) {
+            console.log(`  ✅ Found video iframe: ${cleanSrc.substring(0, 80)}...`);
             videoSources.push({
               quality: 'HD',
               url: cleanSrc
@@ -299,29 +301,26 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
       const scripts = $$('script').map((i, el) => $$(el).html()).get();
       for (const script of scripts) {
         if (script) {
-          // Look for embed URLs
+          // Look for embed URLs - prioritize these domains
           const embedPatterns = [
-            /'https?:\/\/[^']+\.(m3u8|mp4|ts)[^']*'/gi,
-            /"https?:\/\/[^"]+\.(m3u8|mp4|ts)[^"]*"/gi,
-            /https?:\/\/[^\s<>'"]+\.m3u8[^\s<>'"]*/gi,
-            /https?:\/\/[^\s<>'"]+\.mp4[^\s<>'"]*/gi,
+            /https?:\/\/[^\s<>'"]+\.(m3u8|mp4|ts)[^\s<>'"]*/gi,
             /https?:\/\/[^\s<>'"]+\/embed\/[^\s<>'"]*/gi,
             /https?:\/\/[^\s<>'"]+\/v\/[^\s<>'"]*/gi,
-            /file:\s*['"]([^'"]+)['"]/gi,
-            /src:\s*['"]([^'"]+)['"]/gi,
-            /url:\s*['"]([^'"]+)['"]/gi,
-            /data-video=['"]([^'"]+)['"]/gi,
-            /data-src=['"]([^'"]+)['"]/gi
+            /https?:\/\/[^\s<>'"]+\.gogoanime[^\s<>'"]*/gi,
+            /https?:\/\/[^\s<>'"]+\.vidstream[^\s<>'"]*/gi,
+            /https?:\/\/[^\s<>'"]+\.mp4upload[^\s<>'"]*/gi,
+            /https?:\/\/[^\s<>'"]+\.dood[^\s<>'"]*/gi,
+            /https?:\/\/[^\s<>'"]+\.streamtape[^\s<>'"]*/gi,
+            /https?:\/\/[^\s<>'"]+\.mcloud[^\s<>'"]*/gi,
           ];
           
           for (const pattern of embedPatterns) {
             let match;
             while ((match = pattern.exec(script)) !== null) {
               let url = match[1] || match[0];
-              // Clean up the URL
               url = url.replace(/^['"]|['"]$/g, '');
-              if (url && !url.includes('.jpg') && !url.includes('.png') && !url.includes('.gif') && !url.includes('.webp')) {
-                console.log(`  ✅ Found video in script: ${url.substring(0, 60)}...`);
+              if (url && !isTrackingUrl(url)) {
+                console.log(`  ✅ Found video in script: ${url.substring(0, 80)}...`);
                 videoSources.push({
                   quality: 'HD',
                   url: url
@@ -341,8 +340,8 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
     if (videoSources.length === 0) {
       $$('video source').each((i, el) => {
         const src = $$(el).attr('src');
-        if (src) {
-          console.log(`  ✅ Found video source tag: ${src.substring(0, 60)}...`);
+        if (src && !isTrackingUrl(src)) {
+          console.log(`  ✅ Found video source tag: ${src.substring(0, 80)}...`);
           videoSources.push({
             quality: $$(el).attr('data-quality') || 'HD',
             url: src
@@ -370,10 +369,9 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
       for (const selector of playerSelectors) {
         const player = $$(selector);
         if (player.length > 0) {
-          // Check for data attributes
           const dataVideo = player.attr('data-video') || player.attr('data-src') || player.attr('data-url');
-          if (dataVideo) {
-            console.log(`  ✅ Found video in data attribute: ${dataVideo.substring(0, 60)}...`);
+          if (dataVideo && !isTrackingUrl(dataVideo)) {
+            console.log(`  ✅ Found video in data attribute: ${dataVideo.substring(0, 80)}...`);
             videoSources.push({
               quality: 'HD',
               url: dataVideo
@@ -381,12 +379,11 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
             break;
           }
           
-          // Check the HTML inside
           const html = player.html();
           if (html) {
             const match = html.match(/https?:\/\/[^"'\s]+\.(m3u8|mp4)[^"'\s]*/i);
-            if (match) {
-              console.log(`  ✅ Found video in player HTML: ${match[0].substring(0, 60)}...`);
+            if (match && !isTrackingUrl(match[0])) {
+              console.log(`  ✅ Found video in player HTML: ${match[0].substring(0, 80)}...`);
               videoSources.push({
                 quality: 'HD',
                 url: match[0]
@@ -399,63 +396,85 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
     }
     
     // ============================================================
-    // METHOD 6: Try to find the embed URL in a script with specific patterns
+    // METHOD 6: Look for gogoanime or similar embed patterns
     // ============================================================
     if (videoSources.length === 0) {
       const scripts = $$('script').map((i, el) => $$(el).html()).get();
       for (const script of scripts) {
         if (script) {
-          // Look for gogoanime or other embed patterns
-          const gogoMatch = script.match(/https?:\/\/[^"']+\.(gogoanime|gogo|anime)[^"']*/i);
-          if (gogoMatch) {
-            console.log(`  ✅ Found gogoanime embed: ${gogoMatch[0].substring(0, 60)}...`);
-            videoSources.push({
-              quality: 'HD',
-              url: gogoMatch[0]
-            });
-            break;
-          }
+          // Look for specific embed domains
+          const domainPatterns = [
+            /https?:\/\/[^"']*(gogoanime|gogo|anime)[^"']*\.(m3u8|mp4)[^"']*/gi,
+            /https?:\/\/[^"']*(vidstream|mp4upload|dood|streamtape|mcloud)[^"']*/gi,
+            /https?:\/\/[^"']*(emb|player|video)[^"']*\.(m3u8|mp4)[^"']*/gi
+          ];
           
-          // Look for vidstream or other common embed domains
-          const embedMatch = script.match(/https?:\/\/[^"']+\.(vidstream|mp4upload|dood|streamtape|mcloud)[^"']*/i);
-          if (embedMatch) {
-            console.log(`  ✅ Found embed URL: ${embedMatch[0].substring(0, 60)}...`);
-            videoSources.push({
-              quality: 'HD',
-              url: embedMatch[0]
-            });
-            break;
+          for (const pattern of domainPatterns) {
+            const match = script.match(pattern);
+            if (match && !isTrackingUrl(match[0])) {
+              console.log(`  ✅ Found embed URL: ${match[0].substring(0, 80)}...`);
+              videoSources.push({
+                quality: 'HD',
+                url: match[0]
+              });
+              break;
+            }
+          }
+          if (videoSources.length > 0) break;
+        }
+      }
+    }
+    
+    // ============================================================
+    // METHOD 7: Check for redirect and follow it
+    // ============================================================
+    if (videoSources.length === 0) {
+      const scripts = $$('script').map((i, el) => $$(el).html()).get();
+      for (const script of scripts) {
+        if (script) {
+          const redirectMatch = script.match(/window\.location\s*=\s*['"]([^'"]+)['"]/i);
+          if (redirectMatch) {
+            const redirectUrl = redirectMatch[1];
+            if (!isTrackingUrl(redirectUrl)) {
+              console.log(`  🔄 Found redirect: ${redirectUrl.substring(0, 80)}...`);
+              try {
+                const redirectResponse = await fetch(redirectUrl, {
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0'
+                  }
+                });
+                if (redirectResponse.ok) {
+                  const redirectData = await redirectResponse.text();
+                  const redirect$ = cheerio.load(redirectData);
+                  const iframeSrc = redirect$('iframe').first().attr('src');
+                  if (iframeSrc && !isTrackingUrl(iframeSrc)) {
+                    const cleanSrc = iframeSrc.startsWith('//') ? `https:${iframeSrc}` : iframeSrc;
+                    console.log(`  ✅ Found video after redirect`);
+                    videoSources.push({
+                      quality: 'HD',
+                      url: cleanSrc
+                    });
+                    break;
+                  }
+                }
+              } catch (e) {
+                console.log(`  Redirect failed: ${e.message}`);
+              }
+            }
           }
         }
       }
     }
     
     // ============================================================
-    // METHOD 7: Look for iframe with src containing video player
-    // ============================================================
-    if (videoSources.length === 0) {
-      $$('iframe[src*="player"], iframe[src*="embed"], iframe[src*="video"], iframe[src*="watch"]').each((i, el) => {
-        const src = $$(el).attr('src');
-        if (src) {
-          const cleanSrc = src.startsWith('//') ? `https:${src}` : src;
-          console.log(`  ✅ Found player iframe: ${cleanSrc.substring(0, 60)}...`);
-          videoSources.push({
-            quality: 'HD',
-            url: cleanSrc
-          });
-        }
-      });
-    }
-    
-    // ============================================================
     // Return the video source
     // ============================================================
     if (videoSources.length > 0) {
-      // Remove duplicates
+      // Remove duplicates and filter out tracking
       const uniqueSources = [];
       const seenUrls = new Set();
       for (const source of videoSources) {
-        if (!seenUrls.has(source.url)) {
+        if (!seenUrls.has(source.url) && !isTrackingUrl(source.url)) {
           seenUrls.add(source.url);
           uniqueSources.push(source);
         }
@@ -468,7 +487,7 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
       const bestSource = hlsSource || mp4Source || embedSource || uniqueSources[0];
       
       console.log(`  ✅ Found ${uniqueSources.length} unique video sources`);
-      console.log(`  📺 Best source: ${bestSource.url.substring(0, 80)}...`);
+      console.log(`  📺 Best source: ${bestSource.url.substring(0, 100)}...`);
       
       return {
         url: bestSource.url,
@@ -476,43 +495,6 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
         watchUrl: watchUrl,
         sourceCount: uniqueSources.length
       };
-    }
-    
-    // ============================================================
-    // If no video found, check for redirect
-    // ============================================================
-    const scripts = $$('script').map((i, el) => $$(el).html()).get();
-    for (const script of scripts) {
-      if (script) {
-        const redirectMatch = script.match(/window\.location\s*=\s*['"]([^'"]+)['"]/i);
-        if (redirectMatch) {
-          console.log(`  🔄 Found redirect, following...`);
-          try {
-            const redirectResponse = await fetch(redirectMatch[1], {
-              headers: {
-                'User-Agent': 'Mozilla/5.0'
-              }
-            });
-            if (redirectResponse.ok) {
-              const redirectData = await redirectResponse.text();
-              const redirect$ = cheerio.load(redirectData);
-              const iframeSrc = redirect$('iframe').first().attr('src');
-              if (iframeSrc) {
-                const cleanSrc = iframeSrc.startsWith('//') ? `https:${iframeSrc}` : iframeSrc;
-                console.log(`  ✅ Found video after redirect`);
-                return {
-                  url: cleanSrc,
-                  sources: [{ quality: 'HD', url: cleanSrc }],
-                  watchUrl: watchUrl,
-                  redirected: true
-                };
-              }
-            }
-          } catch (e) {
-            console.log(`  Redirect failed: ${e.message}`);
-          }
-        }
-      }
     }
     
     // ============================================================
