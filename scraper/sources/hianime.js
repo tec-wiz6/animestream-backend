@@ -27,33 +27,23 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     const data = await response.text();
     const $ = cheerio.load(data);
     
-    // Find ALL anime results with their titles
+    // Find ALL anime results
     let animeResults = [];
     
-    $('.film-poster a, .poster a, .thumb a, .film-list .film-poster a, .anime-item a, .movie-item a').each((i, el) => {
+    $('.film-poster a, .poster a, .thumb a').each((i, el) => {
       const href = $(el).attr('href');
       if (href && href.includes('/watch/')) {
         const match = href.match(/\/watch\/([^-]+(?:-[^-]+)*?)(?:-episode-|$)/);
         if (match) {
-          // Get the title from alt text or title attribute
           const img = $(el).find('img');
-          const title = img.attr('alt') || $(el).find('.title').text() || $(el).find('.name').text() || $(el).text().trim() || match[1];
+          const title = img.attr('alt') || $(el).find('.title').text() || $(el).text().trim() || match[1];
           const slug = match[1];
-          
-          // Check if it has a season/episode indicator
-          const isSeason = title.match(/season\s*\d+/i) || title.match(/part\s*\d+/i) || title.match(/arc/i);
-          const isMovie = title.match(/movie|film|special|ova|oad/i);
-          const isMain = !isMovie && !isSeason;
           
           animeResults.push({
             slug: slug,
             href: href,
             title: title,
-            isMovie: isMovie,
-            isSeason: isSeason,
-            isMain: isMain,
-            // Prefer shorter slugs (usually the main series)
-            slugLength: slug.length
+            isMovie: title?.toLowerCase().includes('movie') || title?.toLowerCase().includes('film')
           });
         }
       }
@@ -64,78 +54,19 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       return generateMockData(animeId, episodeNum);
     }
     
-    // Log all found results with titles
-    console.log(`  Found ${animeResults.length} results:`);
-    animeResults.forEach((r, i) => {
-      const type = r.isMovie ? '🎬 MOVIE' : r.isSeason ? '📺 SEASON' : '⭐ MAIN';
-      console.log(`    ${i + 1}. ${r.title || r.slug} ${type}`);
-    });
-    
-    // Pick the BEST match - prefer main series, then seasons, avoid movies
-    let bestMatch = null;
-    
-    // First: Try to find exact match with search term in title (case insensitive)
-    const searchLower = animeId.toLowerCase();
-    const searchWords = searchLower.split(' ');
-    
-    // Score each result
-    let scoredResults = animeResults.map(result => {
-      let score = 0;
-      const titleLower = (result.title || '').toLowerCase();
-      
-      // Bonus for main series (not movie)
-      if (!result.isMovie && !result.isSeason) score += 10;
-      // Bonus for seasons
-      if (result.isSeason) score += 5;
-      // Penalty for movies
-      if (result.isMovie) score -= 10;
-      
-      // Bonus for exact title match
-      if (titleLower === searchLower) score += 20;
-      // Bonus for containing all search words
-      const allWordsMatch = searchWords.every(word => titleLower.includes(word));
-      if (allWordsMatch) score += 15;
-      
-      // Bonus for shorter slugs (main series tend to be shorter)
-      if (result.slugLength < 20) score += 5;
-      if (result.slugLength < 15) score += 5;
-      
-      // Bonus if title doesn't have movie/special keywords
-      if (!titleLower.includes('movie') && !titleLower.includes('film') && !titleLower.includes('special')) {
-        score += 5;
-      }
-      
-      return { ...result, score };
-    });
-    
-    // Sort by score descending
-    scoredResults.sort((a, b) => b.score - a.score);
-    
-    console.log(`  Top scores:`);
-    scoredResults.slice(0, 3).forEach((r, i) => {
-      console.log(`    ${i + 1}. ${r.title || r.slug} (score: ${r.score})`);
-    });
-    
-    bestMatch = scoredResults[0];
-    
-    if (!bestMatch) {
-      bestMatch = animeResults[0];
-    }
-    
+    // Find best match (prefer main series, not movies)
+    let bestMatch = animeResults.find(r => !r.isMovie) || animeResults[0];
     const animeSlug = bestMatch.slug;
-    console.log(`📺 Selected: ${bestMatch.title || animeSlug} (score: ${bestMatch.score})`);
-    console.log(`📺 Final anime slug: ${animeSlug}`);
+    console.log(`📺 Selected: ${bestMatch.title || animeSlug}`);
     
-    // Now get the episode list
+    // Get episode list
     const episodeUrls = [
       `${baseUrl}/category/${animeSlug}`,
       `${baseUrl}/anime/${animeSlug}`,
       `${baseUrl}/series/${animeSlug}`
     ];
     
-    let episodePage = null;
     let $$ = null;
-    
     for (const url of episodeUrls) {
       try {
         const epResponse = await fetch(url, {
@@ -147,7 +78,6 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
         if (epResponse.ok) {
           const epData = await epResponse.text();
           $$ = cheerio.load(epData);
-          episodePage = url;
           console.log(`  ✅ Found episode list at: ${url}`);
           break;
         }
@@ -162,33 +92,13 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     }
     
     if (episodeNum) {
-      return await getEpisodeSource($$, animeSlug, episodeNum, baseUrl);
+      // Get specific episode video source
+      return await getEpisodeVideoSource($$, animeSlug, episodeNum, baseUrl);
     }
     
     // Extract all episodes
     const episodes = [];
-    const episodeSelectors = [
-      '.episodes a',
-      '.episode-list a',
-      '.ep-list a',
-      '.eps a',
-      '.list-episode a',
-      '.episode-item a',
-      '.episodes .ep-item a',
-      '.episodes .episode-item a',
-      '.episode a',
-      '.ep a'
-    ];
-    
-    let episodeLinks = [];
-    for (const selector of episodeSelectors) {
-      const links = $$(selector);
-      if (links.length > 0) {
-        episodeLinks = links;
-        console.log(`  Found ${links.length} episode links using selector: ${selector}`);
-        break;
-      }
-    }
+    const episodeLinks = $$('.episodes a, .episode-list a, .ep-list a, .eps a, .ep a');
     
     if (episodeLinks.length === 0) {
       console.log('  Looking for episodes in page...');
@@ -197,10 +107,9 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
         if (href) {
           const match = href.match(/episode-(\d+)/);
           if (match) {
-            const epNum = parseInt(match[1]);
             episodes.push({
-              number: epNum,
-              title: `Episode ${epNum}`,
+              number: parseInt(match[1]),
+              title: `Episode ${match[1]}`,
               url: href.startsWith('http') ? href : `${baseUrl}${href}`
             });
           }
@@ -209,39 +118,25 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       
       if (episodes.length > 0) {
         episodes.sort((a, b) => a.number - b.number);
-        console.log(`  ✅ Found ${episodes.length} episodes from links`);
         return episodes;
       }
-      
       return generateMockData(animeId, null);
     }
     
     episodeLinks.each((i, el) => {
       const href = $$(el).attr('href');
-      const title = $$(el).text().trim() || $$(el).attr('title') || `Episode ${i + 1}`;
-      
-      let epNum = null;
       const match = href?.match(/episode-(\d+)/);
       if (match) {
-        epNum = parseInt(match[1]);
-      } else {
-        const textMatch = title.match(/\d+/);
-        if (textMatch) {
-          epNum = parseInt(textMatch[0]);
-        }
-      }
-      
-      if (epNum) {
         episodes.push({
-          number: epNum,
-          title: title,
-          url: href?.startsWith('http') ? href : `${baseUrl}${href}`
+          number: parseInt(match[1]),
+          title: `Episode ${match[1]}`,
+          url: href.startsWith('http') ? href : `${baseUrl}${href}`
         });
       }
     });
     
     episodes.sort((a, b) => a.number - b.number);
-    console.log(`✅ Found ${episodes.length} episodes for ${animeSlug}`);
+    console.log(`✅ Found ${episodes.length} episodes`);
     return episodes;
     
   } catch (error) {
@@ -249,105 +144,200 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     return generateMockData(animeId, episodeNum);
   }
 }
-async function getEpisodeSource($, animeSlug, episodeNum, baseUrl) {
+
+// NEW: Get actual video source from the watch page
+async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
   try {
-    // Try different watch URL formats
-    const watchUrls = [
-      `${baseUrl}/watch/${animeSlug}-episode-${episodeNum}`,
-      `${baseUrl}/anime/${animeSlug}/episode/${episodeNum}`,
-      `${baseUrl}/episode/${animeSlug}-${episodeNum}`
-    ];
+    const watchUrl = `${baseUrl}/watch/${animeSlug}-episode-${episodeNum}`;
+    console.log(`📺 Getting video source from: ${watchUrl}`);
     
-    let watchData = null;
-    let $$ = null;
+    const response = await fetch(watchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Referer': baseUrl,
+        'Sec-Fetch-Dest': 'iframe',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Upgrade-Insecure-Requests': '1'
+      }
+    });
     
-    for (const url of watchUrls) {
-      try {
-        console.log(`  Trying watch URL: ${url}`);
-        const response = await fetch(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-          }
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.text();
+    const $$ = cheerio.load(data);
+    
+    // LOOK FOR THE VIDEO IFRAME
+    let videoSources = [];
+    
+    // Method 1: Look for iframe that contains the video player
+    $$('iframe').each((i, el) => {
+      const src = $$(el).attr('src');
+      if (src && !src.includes('google') && !src.includes('facebook') && !src.includes('twitter')) {
+        console.log(`  Found iframe: ${src}`);
+        videoSources.push({
+          quality: 'HD',
+          url: src.startsWith('//') ? `https:${src}` : src
         });
-        
-        if (response.ok) {
-          watchData = await response.text();
-          $$ = cheerio.load(watchData);
-          console.log(`  ✅ Found watch page at: ${url}`);
-          break;
-        }
-      } catch (e) {
-        continue;
       }
-    }
+    });
     
-    if (!$$ || !watchData) {
-      throw new Error('Could not fetch watch page');
-    }
-    
-    const sources = [];
-    
-    // Try to find video source
-    const videoSelectors = [
-      'iframe',
-      'video source',
-      '[data-video]',
-      '[data-src]',
-      '[data-url]',
-      '.player-container iframe',
-      '#player iframe',
-      '.embed-player iframe'
-    ];
-    
-    for (const selector of videoSelectors) {
-      const element = $$(selector).first();
-      if (element.length > 0) {
-        let src = element.attr('src') || element.attr('data-video') || element.attr('data-src') || element.attr('data-url');
-        if (src) {
-          if (src.startsWith('/')) src = `https:${src}`;
-          sources.push({ quality: 'HD', url: src });
-          console.log(`  ✅ Found video source`);
-          break;
-        }
-      }
-    }
-    
-    // If no video found, check scripts for embedded video
-    if (sources.length === 0) {
+    // Method 2: Look for video player embed URL in script tags
+    if (videoSources.length === 0) {
       const scripts = $$('script').map((i, el) => $$(el).html()).get();
       for (const script of scripts) {
         if (script) {
-          // Look for various video URL patterns
-          const patterns = [
-            /['"](https?:\/\/[^'"]+\.m3u8[^'"]*)['"]/,
-            /['"](https?:\/\/[^'"]+\.mp4[^'"]*)['"]/,
-            /['"](https?:\/\/[^'"]+\.ts[^'"]*)['"]/,
-            /file:\s*['"](https?:\/\/[^'"]+)['"]/
+          // Look for embed URL patterns
+          const embedPatterns = [
+            /['"](https?:\/\/[^'"]+\.(m3u8|mp4)[^'"]*)['"]/i,
+            /['"](https?:\/\/[^'"]+\/embed\/[^'"]+)['"]/i,
+            /['"](https?:\/\/[^'"]+\/v\/[^'"]+)['"]/i,
+            /data-video=['"]([^'"]+)['"]/i,
+            /data-src=['"]([^'"]+)['"]/i
           ];
-          for (const pattern of patterns) {
+          
+          for (const pattern of embedPatterns) {
             const match = script.match(pattern);
             if (match) {
-              sources.push({ quality: 'HD', url: match[1] });
-              console.log(`  ✅ Found video in script`);
+              console.log(`  Found video URL in script: ${match[1]}`);
+              videoSources.push({
+                quality: 'HD',
+                url: match[1]
+              });
               break;
             }
           }
-          if (sources.length > 0) break;
+          if (videoSources.length > 0) break;
         }
       }
     }
     
+    // Method 3: Look for video source in data attributes
+    if (videoSources.length === 0) {
+      $$('[data-video], [data-src], [data-url]').each((i, el) => {
+        const src = $$(el).attr('data-video') || $$(el).attr('data-src') || $$(el).attr('data-url');
+        if (src && !src.includes('image') && !src.includes('jpg') && !src.includes('png')) {
+          console.log(`  Found video in data attribute: ${src}`);
+          videoSources.push({
+            quality: 'HD',
+            url: src
+          });
+        }
+      });
+    }
+    
+    // Method 4: Check for video tag
+    if (videoSources.length === 0) {
+      $$('video source').each((i, el) => {
+        const src = $$(el).attr('src');
+        if (src) {
+          console.log(`  Found video source tag: ${src}`);
+          videoSources.push({
+            quality: $$(el).attr('data-quality') || 'HD',
+            url: src
+          });
+        }
+      });
+    }
+    
+    // Method 5: Try to find the player container and extract embed URL
+    if (videoSources.length === 0) {
+      // Look for common player containers
+      const playerSelectors = [
+        '.player-container',
+        '.video-player',
+        '#player',
+        '.embed-container',
+        '.play-video'
+      ];
+      
+      for (const selector of playerSelectors) {
+        const player = $$(selector);
+        if (player.length > 0) {
+          const html = player.html();
+          const match = html?.match(/https?:\/\/[^"'\s]+\.(m3u8|mp4)[^"'\s]*/i);
+          if (match) {
+            console.log(`  Found video in player: ${match[0]}`);
+            videoSources.push({
+              quality: 'HD',
+              url: match[0]
+            });
+            break;
+          }
+        }
+      }
+    }
+    
+    // If still no video, check if there's a redirect to an external player
+    if (videoSources.length === 0) {
+      // Check for redirect scripts
+      const scripts = $$('script').map((i, el) => $$(el).html()).get();
+      for (const script of scripts) {
+        if (script) {
+          const redirectMatch = script.match(/window\.location\s*=\s*['"]([^'"]+)['"]/i);
+          if (redirectMatch) {
+            console.log(`  Found redirect: ${redirectMatch[1]}`);
+            // Try to fetch the redirect URL
+            try {
+              const redirectResponse = await fetch(redirectMatch[1], {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0'
+                }
+              });
+              if (redirectResponse.ok) {
+                const redirectData = await redirectResponse.text();
+                const redirect$ = cheerio.load(redirectData);
+                const iframeSrc = redirect$('iframe').first().attr('src');
+                if (iframeSrc) {
+                  videoSources.push({
+                    quality: 'HD',
+                    url: iframeSrc
+                  });
+                }
+              }
+            } catch (e) {
+              console.log(`  Redirect fetch failed: ${e.message}`);
+            }
+          }
+        }
+      }
+    }
+    
+    // Return the video source
+    if (videoSources.length > 0) {
+      // Prefer .m3u8 or .mp4 URLs
+      const hlsSource = videoSources.find(s => s.url.includes('.m3u8'));
+      const mp4Source = videoSources.find(s => s.url.includes('.mp4'));
+      const bestSource = hlsSource || mp4Source || videoSources[0];
+      
+      return {
+        url: bestSource.url,
+        sources: videoSources,
+        watchUrl: watchUrl,
+        sourceCount: videoSources.length
+      };
+    }
+    
+    // If no video found, return the watch URL as fallback
+    console.log(`⚠️ No video source found, returning watch URL`);
     return {
-      url: sources.length > 0 ? sources[0].url : null,
-      sources: sources,
-      watchUrl: watchUrls[0]
+      url: watchUrl,
+      sources: [{ quality: 'HD', url: watchUrl }],
+      watchUrl: watchUrl,
+      fallback: true
     };
     
   } catch (error) {
-    console.error('❌ Failed to get episode source:', error.message);
+    console.error('❌ Error getting video source:', error.message);
     return {
-      url: null,
-      sources: [{ quality: '720p', url: `https://example.com/video/${animeSlug}/${episodeNum}/720.m3u8` }],
+      url: `https://hianime.ro/watch/${animeSlug}-episode-${episodeNum}`,
+      sources: [{ quality: 'HD', url: `https://hianime.ro/watch/${animeSlug}-episode-${episodeNum}` }],
       error: error.message
     };
   }
@@ -358,8 +348,7 @@ function generateMockData(animeId, episodeNum) {
     return {
       url: `https://hianime.ro/watch/${animeId}-episode-${episodeNum}`,
       sources: [
-        { quality: '1080p', url: `https://example.com/video/${animeId}/${episodeNum}/1080.m3u8` },
-        { quality: '720p', url: `https://example.com/video/${animeId}/${episodeNum}/720.m3u8` }
+        { quality: 'HD', url: `https://hianime.ro/watch/${animeId}-episode-${episodeNum}` }
       ],
       watchUrl: `https://hianime.ro/watch/${animeId}-episode-${episodeNum}`
     };
