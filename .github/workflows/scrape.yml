@@ -18,25 +18,17 @@ jobs:
           node-version: '18'
           
       - name: Install dependencies
-        run: npm ci
+        run: npm install  # Changed from npm ci to npm install
+        
+      - name: Create cache directory
+        run: mkdir -p cache
         
       - name: Run scraper
         run: npm run scrape
-        continue-on-error: true
         
-      - name: Upload results
+      - name: Upload cache as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: scrape-results
-          path: |
-            cache/
-            *.log
-          retention-days: 3
-          
-      - name: Debug - Show what was scraped
-        run: |
-          echo "📁 Cache directory contents:"
-          ls -la cache/ || echo "No cache directory"
-          echo ""
-          echo "📄 Log files:"
-          ls -la *.log 2>/dev/null || echo "No log files"
+          name: anime-cache
+          path: cache/
+          retention-days: 7
