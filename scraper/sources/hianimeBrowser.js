@@ -1,12 +1,7 @@
-// scraper/sources/hianimeBrowser.js
 const puppeteer = require('puppeteer');
 
 const BASE_URL = 'https://hianime.ro';
 
-/**
- * Launch a headless browser and extract a video/iframe URL
- * from the watch page DOM after JavaScript has run.
- */
 async function getEpisodeVideoSourceBrowser(animeSlug, episodeNum) {
   const watchUrl = `${BASE_URL}/watch/${animeSlug}-episode-${episodeNum}`;
   console.log(`🌐 [Browser] Opening: ${watchUrl}`);
@@ -14,7 +9,7 @@ async function getEpisodeVideoSourceBrowser(animeSlug, episodeNum) {
   let browser;
   try {
     browser = await puppeteer.launch({
-      headless: 'new',               // modern headless mode
+      headless: true,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -30,11 +25,11 @@ async function getEpisodeVideoSourceBrowser(animeSlug, episodeNum) {
 
     await page.goto(watchUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    // Wait a bit more for player scripts
-    await page.waitForTimeout(5000);
+    // Instead of page.waitForTimeout, use plain JS delay
+    await new Promise((resolve) => setTimeout(resolve, 5000));
 
     // Try to locate an iframe that looks like a player
-    const iframeHandle = await page.evaluate(() => {
+    const iframeSrc = await page.evaluate(() => {
       const iframes = Array.from(document.querySelectorAll('iframe'));
       const candidates = iframes.filter((f) => {
         const src = f.getAttribute('src') || f.getAttribute('data-src') || '';
@@ -57,8 +52,8 @@ async function getEpisodeVideoSourceBrowser(animeSlug, episodeNum) {
       return src || null;
     });
 
-    if (iframeHandle) {
-      let iframeUrl = iframeHandle;
+    if (iframeSrc) {
+      let iframeUrl = iframeSrc;
       if (iframeUrl.startsWith('//')) {
         iframeUrl = 'https:' + iframeUrl;
       }
