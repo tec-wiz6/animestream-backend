@@ -1,4 +1,4 @@
-const { scrapeAnimeEpisodes } = require('./index');
+const { scrapeAnimeEpisodes, scrapeEpisodeSource } = require('./index');
 const fs = require('fs');
 const path = require('path');
 
@@ -7,11 +7,10 @@ if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
 
-// Use search terms instead of slugs - the scraper will find the correct slug
 const ANIME_LIST = [
   { id: 'naruto', name: 'Naruto' },
-  { id: 'one piece', name: 'One Piece' },  // Use space for search
-  { id: 'demon slayer', name: 'Demon Slayer' },  // Use actual title
+  { id: 'one piece', name: 'One Piece' },
+  { id: 'demon slayer', name: 'Demon Slayer' },
   { id: 'jujutsu kaisen', name: 'Jujutsu Kaisen' },
   { id: 'attack on titan', name: 'Attack on Titan' },
 ];
@@ -22,15 +21,17 @@ async function main() {
   
   for (const anime of ANIME_LIST) {
     try {
-      console.log(`📼 Scraping: ${anime.name} (Search: ${anime.id})`);
+      console.log(`\n📼 Scraping: ${anime.name} (Search: ${anime.id})`);
       
+      // Get episodes
       const episodes = await scrapeAnimeEpisodes(anime.id);
       
+      // Get video source for first episode
       if (episodes && episodes.length > 0) {
-        // Check if it's real data (has real URLs)
-        const isRealData = episodes.some(ep => ep.url && !ep.url.includes('example.com'));
-        console.log(`  📊 Data type: ${isRealData ? 'REAL' : 'MOCK'}`);
-        console.log(`  📝 First episode URL: ${episodes[0]?.url || 'N/A'}`);
+        console.log(`  Testing episode 1 video source...`);
+        const source = await scrapeEpisodeSource(anime.id, 1);
+        console.log(`  📺 Video URL: ${source.url?.substring(0, 80) || 'N/A'}...`);
+        console.log(`  📊 Sources found: ${source.sources?.length || 0}`);
       }
       
       const cacheFile = path.join(CACHE_DIR, `${anime.id.replace(/\s+/g, '-')}.json`);
@@ -44,20 +45,16 @@ async function main() {
       }, null, 2));
       
       console.log(`✅ Saved ${episodes.length} episodes for ${anime.name}`);
-      console.log(`💾 Cache: ${cacheFile}\n`);
       
-      // Wait between requests to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 3000));
       
     } catch (error) {
       console.error(`❌ Failed to scrape ${anime.name}:`, error.message);
-      console.log('Continuing...\n');
     }
   }
   
-  console.log('🎉 Scraping complete!');
+  console.log('\n🎉 Scraping complete!');
   console.log(`📁 Cache stored in: ${CACHE_DIR}`);
-  console.log(`📊 Total files: ${fs.readdirSync(CACHE_DIR).length}`);
 }
 
 main().catch(console.error);
