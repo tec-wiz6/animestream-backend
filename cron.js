@@ -5,6 +5,50 @@ const http = require('http');
 const cheerio = require('cheerio');
 const zlib = require('zlib');
 
+// List of anime sites to scrape
+const ANIME_SITES = [
+    {
+        name: 'GoGoAnime',
+        url: 'https://gogoanime3.cc/',
+        selectors: ['.episode-item', '.video-item', '.anime-item', '.item', 'a[href*="/episode"]'],
+        titleSelector: '.title, .episode-title, h3, h4, .name',
+        linkSelector: 'a',
+        imageSelector: 'img'
+    },
+    {
+        name: 'AnimeFox',
+        url: 'https://animefox.tv/',
+        selectors: ['.episode-box', '.video-item', '.anime-item', 'a[href*="/watch"]'],
+        titleSelector: '.title, .episode-title, h3, h4',
+        linkSelector: 'a',
+        imageSelector: 'img'
+    },
+    {
+        name: '9Anime',
+        url: 'https://9anime.to/',
+        selectors: ['.episode-item', '.video-item', '.anime-item', 'a[href*="/watch"]'],
+        titleSelector: '.title, .episode-title, h3, h4',
+        linkSelector: 'a',
+        imageSelector: 'img'
+    },
+    {
+        name: 'Zoro',
+        url: 'https://zoro.to/',
+        selectors: ['.episode-item', '.video-item', '.anime-item', 'a[href*="/watch"]'],
+        titleSelector: '.title, .episode-title, h3, h4',
+        linkSelector: 'a',
+        imageSelector: 'img'
+    },
+    {
+        name: 'AnimeSuge',
+        url: 'https://animesuge.to/',
+        selectors: ['.episode-item', '.video-item', '.anime-item', 'a[href*="/watch"]'],
+        titleSelector: '.title, .episode-title, h3, h4',
+        linkSelector: 'a',
+        imageSelector: 'img'
+    }
+];
+
 // Custom fetch with proper decompression
 function fetchUrl(url) {
     return new Promise((resolve, reject) => {
@@ -19,11 +63,18 @@ function fetchUrl(url) {
             method: 'GET',
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate',
+                'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Cache-Control': 'max-age=0',
+                'Referer': 'https://www.google.com/',
+                'DNT': '1'
             },
             timeout: 30000
         };
@@ -81,78 +132,29 @@ async function fetchWithRetry(url, retries = 3) {
     }
 }
 
-// Scrape function
-async function scrapeFullDetails() {
-    console.log('🔄 Starting scrape at:', new Date().toISOString());
+// Scrape a single site
+async function scrapeSite(site) {
+    console.log(`\n🌐 Scraping ${site.name}: ${site.url}`);
     
     try {
-        const targetUrl = process.env.TARGET_URL || 'https://animepahe.pw/';
-        console.log(`📡 Fetching: ${targetUrl}`);
-        
-        const html = await fetchWithRetry(targetUrl);
+        const html = await fetchWithRetry(site.url);
         const $ = cheerio.load(html);
-        
-        // DEBUG: Save HTML for inspection
-        const debugDir = path.join(__dirname, 'debug');
-        if (!fs.existsSync(debugDir)) {
-            fs.mkdirSync(debugDir, { recursive: true });
-        }
-        fs.writeFileSync(path.join(debugDir, 'page.html'), html);
-        console.log('📄 Saved HTML for debugging');
-        
         const episodes = [];
         
-        // Try ALL possible selectors
-        const selectors = [
-            // Common anime/episode selectors
-            '.episode-box',
-            '.episode-item',
-            '.video-item',
-            '.anime-item',
-            '.item',
-            '.episode',
-            '.video',
-            '.card',
-            '.post',
-            '.entry',
-            '.item-episode',
-            '.episode-card',
-            '.video-card',
-            // Links with specific patterns
-            'a[href*="/episode"]',
-            'a[href*="/watch"]',
-            'a[href*="/video"]',
-            'a[href*="/anime"]',
-            'a[href*="/stream"]',
-            'a[href*="/play"]',
-            // Any div with episode-like content
-            'div[class*="episode"]',
-            'div[class*="video"]',
-            'div[class*="anime"]',
-            'div[class*="item"]',
-            // Container elements
-            '.list-item',
-            '.media-item',
-            '.content-item',
-            '.result-item'
-        ];
-        
-        let foundAny = false;
-        
-        for (const selector of selectors) {
+        // Try all selectors for this site
+        for (const selector of site.selectors) {
             const elements = $(selector);
             if (elements.length > 0) {
                 console.log(`✅ Found ${elements.length} items with selector: ${selector}`);
-                foundAny = true;
                 
                 elements.each((i, element) => {
                     const $el = $(element);
                     
-                    // Try to extract episode info
-                    let title = $el.find('.title, .episode-title, h3, h4, .name, .heading, .label').first().text().trim();
-                    let link = $el.attr('href') || $el.find('a').attr('href') || $el.find('a').attr('data-href');
-                    let image = $el.find('img').attr('src') || $el.find('img').attr('data-src') || $el.find('img').attr('data-original');
-                    let episodeNum = $el.find('.episode-number, .ep-num, .num, .number, .index').text().trim() || (i + 1);
+                    let title = $el.find(site.titleSelector).first().text().trim();
+                    let link = $el.find(site.linkSelector).attr('href') || $el.attr('href');
+                    let image = $el.find(site.imageSelector).attr('src') || 
+                                $el.find(site.imageSelector).attr('data-src') || 
+                                $el.find(site.imageSelector).attr('data-original');
                     
                     // If no title, try to get from text
                     if (!title) {
@@ -161,46 +163,44 @@ async function scrapeFullDetails() {
                     
                     // Clean up link
                     if (link && !link.startsWith('http')) {
-                        link = `https://animepahe.pw${link.startsWith('/') ? '' : '/'}${link}`;
+                        const baseUrl = site.url.endsWith('/') ? site.url.slice(0, -1) : site.url;
+                        link = link.startsWith('/') ? baseUrl + link : baseUrl + '/' + link;
                     }
                     
                     // Only add if we have a title or link
                     if (title || link) {
-                        const existing = episodes.find(e => e.link === link);
-                        if (!existing) {
-                            episodes.push({
-                                id: episodes.length + 1,
-                                title: title || `Episode ${episodeNum}`,
-                                episode: parseInt(episodeNum) || episodes.length + 1,
-                                description: $el.find('.description, .synopsis, .summary, .desc, p').text().trim() || 'No description available',
-                                image: image ? (image.startsWith('http') ? image : `https://animepahe.pw${image}`) : null,
-                                link: link || null,
-                                quality: $el.find('.quality, .hd, .resolution, .q').text().trim() || 'HD',
-                                type: $el.find('.type, .sub, .dub, .lang').text().trim() || 'Subbed',
-                                rating: $el.find('.rating, .score, .rate').text().trim() || 'N/A',
-                                releaseDate: $el.find('.release-date, .date, .time').text().trim() || new Date().toISOString().split('T')[0],
-                                timestamp: new Date().toISOString(),
-                                season: 'Season 1',
-                                studio: 'Unknown',
-                                genres: []
-                            });
-                        }
+                        episodes.push({
+                            id: episodes.length + 1,
+                            title: title || `Episode ${episodes.length + 1}`,
+                            episode: episodes.length + 1,
+                            description: $el.find('.description, .synopsis, .summary, .desc, p').text().trim() || 'No description available',
+                            image: image ? (image.startsWith('http') ? image : `${site.url}${image}`) : null,
+                            link: link || null,
+                            quality: $el.find('.quality, .hd, .resolution, .q').text().trim() || 'HD',
+                            type: $el.find('.type, .sub, .dub, .lang').text().trim() || 'Subbed',
+                            rating: $el.find('.rating, .score, .rate').text().trim() || 'N/A',
+                            releaseDate: $el.find('.release-date, .date, .time').text().trim() || new Date().toISOString().split('T')[0],
+                            timestamp: new Date().toISOString(),
+                            season: 'Season 1',
+                            studio: 'Unknown',
+                            genres: [],
+                            source: site.name
+                        });
                     }
                 });
                 
                 // If we found episodes, stop trying more selectors
                 if (episodes.length > 0) {
-                    console.log(`✅ Found ${episodes.length} total episodes so far`);
+                    console.log(`✅ Found ${episodes.length} episodes from ${site.name}`);
                     break;
                 }
             }
         }
         
-        // If still no episodes, try a more aggressive approach
+        // Aggressive fallback for this site
         if (episodes.length === 0) {
-            console.log('🔄 Trying aggressive fallback...');
+            console.log(`🔄 Trying aggressive fallback for ${site.name}...`);
             
-            // Find ANY link that might be an episode
             $('a').each((i, element) => {
                 const $el = $(element);
                 const href = $el.attr('href');
@@ -211,20 +211,24 @@ async function scrapeFullDetails() {
                     href.includes('/watch') || 
                     href.includes('/video') ||
                     href.includes('/anime') ||
-                    href.includes('/stream')
+                    href.includes('/stream') ||
+                    href.includes('/play')
                 )) {
                     const title = text || `Episode ${episodes.length + 1}`;
                     const image = $el.find('img').attr('src') || $el.find('img').attr('data-src');
                     
                     const existing = episodes.find(e => e.link === href);
                     if (!existing && href) {
+                        const baseUrl = site.url.endsWith('/') ? site.url.slice(0, -1) : site.url;
+                        const link = href.startsWith('http') ? href : (href.startsWith('/') ? baseUrl + href : baseUrl + '/' + href);
+                        
                         episodes.push({
                             id: episodes.length + 1,
                             title: title,
                             episode: episodes.length + 1,
                             description: 'No description available',
-                            image: image ? (image.startsWith('http') ? image : `https://animepahe.pw${image}`) : null,
-                            link: href.startsWith('http') ? href : `https://animepahe.pw${href}`,
+                            image: image ? (image.startsWith('http') ? image : baseUrl + '/' + image) : null,
+                            link: link,
                             quality: 'HD',
                             type: 'Subbed',
                             rating: 'N/A',
@@ -232,15 +236,58 @@ async function scrapeFullDetails() {
                             timestamp: new Date().toISOString(),
                             season: 'Season 1',
                             studio: 'Unknown',
-                            genres: []
+                            genres: [],
+                            source: site.name
                         });
                     }
                 }
             });
         }
         
-        // Log final results
-        console.log(`📊 Found ${episodes.length} episodes total`);
+        console.log(`✅ ${site.name}: Found ${episodes.length} episodes`);
+        return episodes;
+        
+    } catch (error) {
+        console.log(`❌ ${site.name} failed: ${error.message}`);
+        return []; // Return empty array for failed sites
+    }
+}
+
+// Scrape ALL sites
+async function scrapeFullDetails() {
+    console.log('🔄 Starting multi-site scrape at:', new Date().toISOString());
+    console.log(`🌐 Will scrape ${ANIME_SITES.length} sites`);
+    
+    try {
+        let allEpisodes = [];
+        const siteResults = {};
+        
+        // Scrape each site
+        for (const site of ANIME_SITES) {
+            const episodes = await scrapeSite(site);
+            siteResults[site.name] = episodes.length;
+            allEpisodes = allEpisodes.concat(episodes);
+            
+            // Small delay between sites to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        
+        // Remove duplicates based on title and link
+        const seen = new Set();
+        const uniqueEpisodes = allEpisodes.filter(ep => {
+            const key = `${ep.title}-${ep.link}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+        
+        // Log results
+        console.log('\n📊 Summary:');
+        for (const [site, count] of Object.entries(siteResults)) {
+            console.log(`  ${site}: ${count} episodes`);
+        }
+        console.log(`\n📊 Total: ${allEpisodes.length} episodes from all sites`);
+        console.log(`📊 Unique: ${uniqueEpisodes.length} unique episodes after deduplication`);
         
         // Save to file
         const dataDir = path.join(__dirname, 'data');
@@ -250,8 +297,9 @@ async function scrapeFullDetails() {
         
         const data = {
             lastUpdated: new Date().toISOString(),
-            totalEpisodes: episodes.length,
-            episodes: episodes.slice(0, 100)
+            totalEpisodes: uniqueEpisodes.length,
+            episodes: uniqueEpisodes.slice(0, 200), // Store up to 200 episodes
+            siteStats: siteResults
         };
         
         fs.writeFileSync(
@@ -259,7 +307,7 @@ async function scrapeFullDetails() {
             JSON.stringify(data, null, 2)
         );
         
-        console.log(`✅ Saved ${episodes.length} episodes successfully`);
+        console.log(`\n✅ Saved ${uniqueEpisodes.length} unique episodes successfully`);
         return data;
         
     } catch (error) {
@@ -273,11 +321,11 @@ async function scrapeFullDetails() {
 if (require.main === module) {
     scrapeFullDetails()
         .then(() => {
-            console.log('✅ Cron job completed');
+            console.log('\n✅ Cron job completed');
             process.exit(0);
         })
         .catch((error) => {
-            console.error('❌ Cron job failed:', error.message);
+            console.error('\n❌ Cron job failed:', error.message);
             process.exit(1);
         });
 }
