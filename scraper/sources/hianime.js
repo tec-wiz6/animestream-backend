@@ -249,3 +249,131 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     return generateMockData(animeId, episodeNum);
   }
 }
+async function getEpisodeSource($, animeSlug, episodeNum, baseUrl) {
+  try {
+    // Try different watch URL formats
+    const watchUrls = [
+      `${baseUrl}/watch/${animeSlug}-episode-${episodeNum}`,
+      `${baseUrl}/anime/${animeSlug}/episode/${episodeNum}`,
+      `${baseUrl}/episode/${animeSlug}-${episodeNum}`
+    ];
+    
+    let watchData = null;
+    let $$ = null;
+    
+    for (const url of watchUrls) {
+      try {
+        console.log(`  Trying watch URL: ${url}`);
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        });
+        
+        if (response.ok) {
+          watchData = await response.text();
+          $$ = cheerio.load(watchData);
+          console.log(`  ✅ Found watch page at: ${url}`);
+          break;
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+    
+    if (!$$ || !watchData) {
+      throw new Error('Could not fetch watch page');
+    }
+    
+    const sources = [];
+    
+    // Try to find video source
+    const videoSelectors = [
+      'iframe',
+      'video source',
+      '[data-video]',
+      '[data-src]',
+      '[data-url]',
+      '.player-container iframe',
+      '#player iframe',
+      '.embed-player iframe'
+    ];
+    
+    for (const selector of videoSelectors) {
+      const element = $$(selector).first();
+      if (element.length > 0) {
+        let src = element.attr('src') || element.attr('data-video') || element.attr('data-src') || element.attr('data-url');
+        if (src) {
+          if (src.startsWith('/')) src = `https:${src}`;
+          sources.push({ quality: 'HD', url: src });
+          console.log(`  ✅ Found video source`);
+          break;
+        }
+      }
+    }
+    
+    // If no video found, check scripts for embedded video
+    if (sources.length === 0) {
+      const scripts = $$('script').map((i, el) => $$(el).html()).get();
+      for (const script of scripts) {
+        if (script) {
+          // Look for various video URL patterns
+          const patterns = [
+            /['"](https?:\/\/[^'"]+\.m3u8[^'"]*)['"]/,
+            /['"](https?:\/\/[^'"]+\.mp4[^'"]*)['"]/,
+            /['"](https?:\/\/[^'"]+\.ts[^'"]*)['"]/,
+            /file:\s*['"](https?:\/\/[^'"]+)['"]/
+          ];
+          for (const pattern of patterns) {
+            const match = script.match(pattern);
+            if (match) {
+              sources.push({ quality: 'HD', url: match[1] });
+              console.log(`  ✅ Found video in script`);
+              break;
+            }
+          }
+          if (sources.length > 0) break;
+        }
+      }
+    }
+    
+    return {
+      url: sources.length > 0 ? sources[0].url : null,
+      sources: sources,
+      watchUrl: watchUrls[0]
+    };
+    
+  } catch (error) {
+    console.error('❌ Failed to get episode source:', error.message);
+    return {
+      url: null,
+      sources: [{ quality: '720p', url: `https://example.com/video/${animeSlug}/${episodeNum}/720.m3u8` }],
+      error: error.message
+    };
+  }
+}
+
+function generateMockData(animeId, episodeNum) {
+  if (episodeNum) {
+    return {
+      url: `https://hianime.ro/watch/${animeId}-episode-${episodeNum}`,
+      sources: [
+        { quality: '1080p', url: `https://example.com/video/${animeId}/${episodeNum}/1080.m3u8` },
+        { quality: '720p', url: `https://example.com/video/${animeId}/${episodeNum}/720.m3u8` }
+      ],
+      watchUrl: `https://hianime.ro/watch/${animeId}-episode-${episodeNum}`
+    };
+  }
+  
+  const episodes = [];
+  for (let i = 1; i <= 24; i++) {
+    episodes.push({
+      number: i,
+      title: `Episode ${i}`,
+      url: `https://hianime.ro/watch/${animeId}-episode-${i}`
+    });
+  }
+  return episodes;
+}
+
+module.exports = { scrapeHiAnime };
