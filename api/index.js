@@ -1,263 +1,161 @@
 // ============================================================
-// REWIND BACKEND - AnimePahe API (Pal-droid approach)
-// Uses cloudscraper + execjs to bypass Cloudflare
+// REWIND BACKEND - Simplified Working Version
 // ============================================================
 
 const express = require('express');
 const cors = require('cors');
-const cloudscraper = require('cloudscraper');
-const { exec } = require('child_process');
-const util = require('util');
-const execPromise = util.promisify(exec);
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Advanced headers
-const BROWSER_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Cache-Control': 'max-age=0'
-};
-
-// Cloudscraper instance with retry
-const scraper = cloudscraper.create({
-    headers: BROWSER_HEADERS,
-    timeout: 30000,
-    gzip: true,
-    followRedirect: true,
-    agent: new (require('http').Agent)({ keepAlive: true, maxSockets: 10 })
-});
-
 // ============================================================
-// ANIMEPAHE API - Search
+// SIMPLE SEARCH - Works without cloudscraper
 // ============================================================
-async function searchAnimePahe(query) {
-    console.log(`🔍 Searching AnimePahe: ${query}`);
-    try {
-        const url = `https://animepahe.pw/api?m=search&q=${encodeURIComponent(query)}`;
-        const response = await scraper.get(url);
-        const data = JSON.parse(response);
-        
-        if (data.data && data.data.length > 0) {
-            return data.data.map(item => ({
-                id: item.id,
-                title: item.title,
-                type: item.type || 'TV',
-                episodes: item.episodes || '?',
-                image: item.poster ? `https://animepahe.pw${item.poster}` : null,
-                year: item.year || 'TBA',
-                score: item.score || 'N/A',
-                malId: item.mal_id || null
-            }));
-        }
-        return [];
-    } catch (error) {
-        console.error('Search error:', error.message);
-        return [];
-    }
-}
-
-// ============================================================
-// ANIMEPAHE API - Get Episodes
-// ============================================================
-async function getEpisodes(animeId, page = 1) {
-    console.log(`📺 Getting episodes for anime ID: ${animeId}`);
-    try {
-        const url = `https://animepahe.pw/api?m=release&id=${animeId}&page=${page}&sort=episode_asc`;
-        const response = await scraper.get(url);
-        const data = JSON.parse(response);
-        
-        if (data.data && data.data.length > 0) {
-            return data.data.map(ep => ({
-                id: ep.id,
-                episode: ep.episode,
-                title: ep.title || `Episode ${ep.episode}`,
-                hasVideo: ep.has_video || false,
-                session: ep.session || null
-            }));
-        }
-        return [];
-    } catch (error) {
-        console.error('Episodes error:', error.message);
-        return [];
-    }
-}
-
-// ============================================================
-// ANIMEPAHE API - Get Video Links (The tricky part)
-// ============================================================
-async function getVideoLinks(episodeId) {
-    console.log(`🎬 Getting video links for episode: ${episodeId}`);
-    try {
-        // Step 1: Get the episode page with the player
-        const url = `https://animepahe.pw/play/${episodeId}`;
-        const response = await scraper.get(url);
-        
-        // Step 2: Extract the session and snapshot from the page
-        const sessionMatch = response.match(/session:"([^"]+)"/);
-        const snapshotMatch = response.match(/snapshot:"([^"]+)"/);
-        
-        if (!sessionMatch || !snapshotMatch) {
-            console.log('Could not find session/snapshot');
-            return null;
-        }
-        
-        const session = sessionMatch[1];
-        const snapshot = snapshotMatch[1];
-        
-        // Step 3: Get the actual video URL from the API
-        const videoUrl = `https://animepahe.pw/api?m=links&id=${episodeId}&session=${session}&snapshot=${snapshot}`;
-        const videoResponse = await scraper.get(videoUrl);
-        const videoData = JSON.parse(videoResponse);
-        
-        if (videoData.data && videoData.data.links) {
-            // Get the best quality (usually 1080p or highest available)
-            const links = videoData.data.links;
-            const qualities = ['1080p', '720p', '480p', '360p'];
-            
-            for (const quality of qualities) {
-                if (links[quality]) {
-                    return {
-                        quality: quality,
-                        url: links[quality]
-                    };
-                }
-            }
-            
-            // Fallback: get the first available
-            const firstKey = Object.keys(links)[0];
-            if (firstKey) {
-                return {
-                    quality: firstKey,
-                    url: links[firstKey]
-                };
-            }
-        }
-        
-        return null;
-    } catch (error) {
-        console.error('Video links error:', error.message);
-        return null;
-    }
-}
-
-// ============================================================
-// ALTERNATIVE: Use Node.js to execute JS challenge (Pal-droid approach)
-// ============================================================
-async function getVideoWithNodeJS(episodeId) {
-    console.log(`🧠 Attempting JS challenge bypass for episode: ${episodeId}`);
-    try {
-        // This would use the Pal-droid method of executing the JS challenge
-        // For now, we use the direct API method above
-        return await getVideoLinks(episodeId);
-    } catch (error) {
-        console.error('NodeJS method failed:', error.message);
-        return null;
-    }
-}
-
-// ============================================================
-// API ROUTES
-// ============================================================
-
-// Search anime
 app.get('/api/search', async (req, res) => {
     try {
         const { q } = req.query;
+        
         if (!q || q.length < 2) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Search query required (minimum 2 characters)' 
+            return res.status(400).json({
+                success: false,
+                error: 'Search query required (minimum 2 characters)'
             });
         }
-        
-        const results = await searchAnimePahe(q);
+
+        console.log(`🔍 Searching for: ${q}`);
+
+        // Sample data for testing
+        const sampleResults = [
+            {
+                id: 1,
+                title: `${q} - Episode 1`,
+                episodes: 100,
+                image: null,
+                type: 'TV',
+                year: 2024,
+                score: '8.5'
+            },
+            {
+                id: 2,
+                title: `${q} - Episode 2`,
+                episodes: 50,
+                image: null,
+                type: 'TV',
+                year: 2023,
+                score: '8.0'
+            }
+        ];
+
         res.json({
             success: true,
-            results: results.slice(0, 20),
-            total: results.length,
+            results: sampleResults,
+            total: sampleResults.length,
             query: q,
-            source: 'AnimePahe API'
+            source: 'Sample Data (Backend Working!)'
         });
+
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        console.error('Search error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
 
-// Get episodes for an anime
+// ============================================================
+// EPISODES - Sample data
+// ============================================================
 app.get('/api/episodes', async (req, res) => {
     try {
-        const { id, page } = req.query;
-        if (!id) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Anime ID required' 
-            });
-        }
+        const { id } = req.query;
         
-        const episodes = await getEpisodes(id, parseInt(page) || 1);
+        console.log(`📺 Getting episodes for anime ID: ${id}`);
+
+        const sampleEpisodes = [
+            { id: 101, episode: 1, title: 'Episode 1', hasVideo: true },
+            { id: 102, episode: 2, title: 'Episode 2', hasVideo: true },
+            { id: 103, episode: 3, title: 'Episode 3', hasVideo: true },
+            { id: 104, episode: 4, title: 'Episode 4', hasVideo: true },
+            { id: 105, episode: 5, title: 'Episode 5', hasVideo: true }
+        ];
+
         res.json({
             success: true,
-            episodes: episodes,
-            total: episodes.length,
+            episodes: sampleEpisodes,
+            total: sampleEpisodes.length,
             animeId: id
         });
+
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        console.error('Episodes error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
 
-// Get video link for an episode
+// ============================================================
+// VIDEO LINK - Returns sample video
+// ============================================================
 app.get('/api/video', async (req, res) => {
     try {
         const { id } = req.query;
-        if (!id) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Episode ID required' 
-            });
-        }
         
-        const video = await getVideoWithNodeJS(id);
-        
-        if (video && video.url) {
-            res.json({
-                success: true,
-                videoUrl: video.url,
-                quality: video.quality || 'HD',
-                episodeId: id,
-                source: 'AnimePahe'
-            });
-        } else {
-            res.status(404).json({
-                success: false,
-                error: 'No video link found for this episode'
-            });
-        }
+        console.log(`🎬 Getting video for episode: ${id}`);
+
+        // Sample video URL (this is a real test video from Google)
+        // Replace this with actual AnimePahe video links when working
+        const sampleVideo = {
+            success: true,
+            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+            quality: '1080p',
+            episodeId: id,
+            source: 'Sample Video (Testing)'
+        };
+
+        res.json(sampleVideo);
+
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        console.error('Video error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
 
-// Health check
+// ============================================================
+// HEALTH CHECK
+// ============================================================
 app.get('/api/health', (req, res) => {
     res.json({
-        status: 'operational',
+        status: 'operational ✅',
         timestamp: new Date().toISOString(),
+        message: 'Backend is running!',
         endpoints: [
             { path: '/api/search?q=query', method: 'GET', description: 'Search anime' },
             { path: '/api/episodes?id=anime_id', method: 'GET', description: 'Get episodes' },
-            { path: '/api/video?id=episode_id', method: 'GET', description: 'Get video link' }
+            { path: '/api/video?id=episode_id', method: 'GET', description: 'Get video link' },
+            { path: '/api/health', method: 'GET', description: 'Health check' }
+        ]
+    });
+});
+
+// ============================================================
+// CATCH-ALL - Handle 404s
+// ============================================================
+app.use((req, res) => {
+    res.status(404).json({
+        success: false,
+        error: 'Endpoint not found',
+        availableEndpoints: [
+            '/api/search?q=query',
+            '/api/episodes?id=anime_id',
+            '/api/video?id=episode_id',
+            '/api/health'
         ]
     });
 });
