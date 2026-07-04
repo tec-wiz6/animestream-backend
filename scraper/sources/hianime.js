@@ -254,56 +254,90 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
     
     let videoSources = [];
     
-    // Method 1: Look for iframe
-    $$('iframe').each((i, el) => {
-      const src = $$(el).attr('src');
-      if (src) {
-        const srcClean = src.startsWith('//') ? `https:${src}` : src;
-        if (!srcClean.includes('google') && !srcClean.includes('facebook') && !srcClean.includes('twitter') && !srcClean.includes('disqus')) {
-          console.log(`  ✅ Found iframe: ${srcClean.substring(0, 80)}...`);
-          videoSources.push({
-            quality: 'HD',
-            url: srcClean
-          });
-        }
+    // ============================================================
+    // METHOD 1: Look for the player iframe with data-src attribute
+    // ============================================================
+    $$('.player iframe, .video-player iframe, #player iframe, .embed-player iframe').each((i, el) => {
+      const src = $$(el).attr('src') || $$(el).attr('data-src');
+      if (src && !src.includes('google') && !src.includes('facebook') && !src.includes('twitter')) {
+        const cleanSrc = src.startsWith('//') ? `https:${src}` : src;
+        console.log(`  ✅ Found player iframe: ${cleanSrc.substring(0, 60)}...`);
+        videoSources.push({
+          quality: 'HD',
+          url: cleanSrc
+        });
       }
     });
     
-    // Method 2: Look for video in script tags
+    // ============================================================
+    // METHOD 2: Look for the main video iframe
+    // ============================================================
+    if (videoSources.length === 0) {
+      $$('iframe').each((i, el) => {
+        const src = $$(el).attr('src') || $$(el).attr('data-src');
+        if (src) {
+          const cleanSrc = src.startsWith('//') ? `https:${src}` : src;
+          // Skip known non-video domains
+          const skipDomains = ['google', 'facebook', 'twitter', 'disqus', 'analytics', 'tracking', 'doubleclick'];
+          const shouldSkip = skipDomains.some(domain => cleanSrc.includes(domain));
+          
+          if (!shouldSkip && cleanSrc.includes('/embed/') || cleanSrc.includes('/v/') || cleanSrc.includes('player')) {
+            console.log(`  ✅ Found video iframe: ${cleanSrc.substring(0, 60)}...`);
+            videoSources.push({
+              quality: 'HD',
+              url: cleanSrc
+            });
+          }
+        }
+      });
+    }
+    
+    // ============================================================
+    // METHOD 3: Look for embed URL in script tags
+    // ============================================================
     if (videoSources.length === 0) {
       const scripts = $$('script').map((i, el) => $$(el).html()).get();
       for (const script of scripts) {
         if (script) {
-          // Look for various video URL patterns
-          const patterns = [
-            /['"](https?:\/\/[^'"]+\.m3u8[^'"]*)['"]/i,
-            /['"](https?:\/\/[^'"]+\.mp4[^'"]*)['"]/i,
-            /['"](https?:\/\/[^'"]+\/embed\/[^'"]+)['"]/i,
-            /['"](https?:\/\/[^'"]+\/v\/[^'"]+)['"]/i,
-            /data-video=['"]([^'"]+)['"]/i,
-            /data-src=['"]([^'"]+)['"]/i,
-            /file\s*:\s*['"](https?:\/\/[^'"]+)['"]/i,
-            /src\s*:\s*['"](https?:\/\/[^'"]+)['"]/i,
-            /url\s*:\s*['"](https?:\/\/[^'"]+)['"]/i
+          // Look for embed URLs
+          const embedPatterns = [
+            /'https?:\/\/[^']+\.(m3u8|mp4|ts)[^']*'/gi,
+            /"https?:\/\/[^"]+\.(m3u8|mp4|ts)[^"]*"/gi,
+            /https?:\/\/[^\s<>'"]+\.m3u8[^\s<>'"]*/gi,
+            /https?:\/\/[^\s<>'"]+\.mp4[^\s<>'"]*/gi,
+            /https?:\/\/[^\s<>'"]+\/embed\/[^\s<>'"]*/gi,
+            /https?:\/\/[^\s<>'"]+\/v\/[^\s<>'"]*/gi,
+            /file:\s*['"]([^'"]+)['"]/gi,
+            /src:\s*['"]([^'"]+)['"]/gi,
+            /url:\s*['"]([^'"]+)['"]/gi,
+            /data-video=['"]([^'"]+)['"]/gi,
+            /data-src=['"]([^'"]+)['"]/gi
           ];
           
-          for (const pattern of patterns) {
-            const match = script.match(pattern);
-            if (match && !match[1].includes('.jpg') && !match[1].includes('.png') && !match[1].includes('.gif')) {
-              console.log(`  ✅ Found video in script: ${match[1].substring(0, 60)}...`);
-              videoSources.push({
-                quality: 'HD',
-                url: match[1]
-              });
-              break;
+          for (const pattern of embedPatterns) {
+            let match;
+            while ((match = pattern.exec(script)) !== null) {
+              let url = match[1] || match[0];
+              // Clean up the URL
+              url = url.replace(/^['"]|['"]$/g, '');
+              if (url && !url.includes('.jpg') && !url.includes('.png') && !url.includes('.gif') && !url.includes('.webp')) {
+                console.log(`  ✅ Found video in script: ${url.substring(0, 60)}...`);
+                videoSources.push({
+                  quality: 'HD',
+                  url: url
+                });
+              }
             }
           }
+          
           if (videoSources.length > 0) break;
         }
       }
     }
     
-    // Method 3: Look for video tag
+    // ============================================================
+    // METHOD 4: Look for video tag
+    // ============================================================
     if (videoSources.length === 0) {
       $$('video source').each((i, el) => {
         const src = $$(el).attr('src');
@@ -317,7 +351,9 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
       });
     }
     
-    // Method 4: Look for player container
+    // ============================================================
+    // METHOD 5: Look for data attributes on player container
+    // ============================================================
     if (videoSources.length === 0) {
       const playerSelectors = [
         '.player-container',
@@ -326,17 +362,31 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
         '.embed-container',
         '.play-video',
         '.jwplayer',
-        '#mediaplayer'
+        '#mediaplayer',
+        '.video-js',
+        '.player'
       ];
       
       for (const selector of playerSelectors) {
         const player = $$(selector);
         if (player.length > 0) {
+          // Check for data attributes
+          const dataVideo = player.attr('data-video') || player.attr('data-src') || player.attr('data-url');
+          if (dataVideo) {
+            console.log(`  ✅ Found video in data attribute: ${dataVideo.substring(0, 60)}...`);
+            videoSources.push({
+              quality: 'HD',
+              url: dataVideo
+            });
+            break;
+          }
+          
+          // Check the HTML inside
           const html = player.html();
           if (html) {
             const match = html.match(/https?:\/\/[^"'\s]+\.(m3u8|mp4)[^"'\s]*/i);
             if (match) {
-              console.log(`  ✅ Found video in player: ${match[0].substring(0, 60)}...`);
+              console.log(`  ✅ Found video in player HTML: ${match[0].substring(0, 60)}...`);
               videoSources.push({
                 quality: 'HD',
                 url: match[0]
@@ -348,59 +398,126 @@ async function getEpisodeVideoSource($, animeSlug, episodeNum, baseUrl) {
       }
     }
     
-    // Method 5: Check for redirect in script
+    // ============================================================
+    // METHOD 6: Try to find the embed URL in a script with specific patterns
+    // ============================================================
     if (videoSources.length === 0) {
       const scripts = $$('script').map((i, el) => $$(el).html()).get();
       for (const script of scripts) {
         if (script) {
-          const redirectMatch = script.match(/window\.location\s*=\s*['"]([^'"]+)['"]/i);
-          if (redirectMatch) {
-            console.log(`  🔄 Found redirect, following...`);
-            try {
-              const redirectResponse = await fetch(redirectMatch[1], {
-                headers: {
-                  'User-Agent': 'Mozilla/5.0'
-                }
-              });
-              if (redirectResponse.ok) {
-                const redirectData = await redirectResponse.text();
-                const redirect$ = cheerio.load(redirectData);
-                const iframeSrc = redirect$('iframe').first().attr('src');
-                if (iframeSrc) {
-                  console.log(`  ✅ Found video after redirect`);
-                  videoSources.push({
-                    quality: 'HD',
-                    url: iframeSrc.startsWith('//') ? `https:${iframeSrc}` : iframeSrc
-                  });
-                }
-              }
-            } catch (e) {
-              console.log(`  Redirect failed: ${e.message}`);
-            }
+          // Look for gogoanime or other embed patterns
+          const gogoMatch = script.match(/https?:\/\/[^"']+\.(gogoanime|gogo|anime)[^"']*/i);
+          if (gogoMatch) {
+            console.log(`  ✅ Found gogoanime embed: ${gogoMatch[0].substring(0, 60)}...`);
+            videoSources.push({
+              quality: 'HD',
+              url: gogoMatch[0]
+            });
+            break;
+          }
+          
+          // Look for vidstream or other common embed domains
+          const embedMatch = script.match(/https?:\/\/[^"']+\.(vidstream|mp4upload|dood|streamtape|mcloud)[^"']*/i);
+          if (embedMatch) {
+            console.log(`  ✅ Found embed URL: ${embedMatch[0].substring(0, 60)}...`);
+            videoSources.push({
+              quality: 'HD',
+              url: embedMatch[0]
+            });
+            break;
           }
         }
       }
     }
     
+    // ============================================================
+    // METHOD 7: Look for iframe with src containing video player
+    // ============================================================
+    if (videoSources.length === 0) {
+      $$('iframe[src*="player"], iframe[src*="embed"], iframe[src*="video"], iframe[src*="watch"]').each((i, el) => {
+        const src = $$(el).attr('src');
+        if (src) {
+          const cleanSrc = src.startsWith('//') ? `https:${src}` : src;
+          console.log(`  ✅ Found player iframe: ${cleanSrc.substring(0, 60)}...`);
+          videoSources.push({
+            quality: 'HD',
+            url: cleanSrc
+          });
+        }
+      });
+    }
+    
+    // ============================================================
     // Return the video source
+    // ============================================================
     if (videoSources.length > 0) {
-      // Prefer HLS (.m3u8) or MP4
-      const hlsSource = videoSources.find(s => s.url.includes('.m3u8'));
-      const mp4Source = videoSources.find(s => s.url.includes('.mp4'));
-      const bestSource = hlsSource || mp4Source || videoSources[0];
+      // Remove duplicates
+      const uniqueSources = [];
+      const seenUrls = new Set();
+      for (const source of videoSources) {
+        if (!seenUrls.has(source.url)) {
+          seenUrls.add(source.url);
+          uniqueSources.push(source);
+        }
+      }
       
-      console.log(`  ✅ Found ${videoSources.length} video sources`);
+      // Prefer HLS (.m3u8) or MP4
+      const hlsSource = uniqueSources.find(s => s.url.includes('.m3u8'));
+      const mp4Source = uniqueSources.find(s => s.url.includes('.mp4'));
+      const embedSource = uniqueSources.find(s => s.url.includes('/embed/') || s.url.includes('/v/'));
+      const bestSource = hlsSource || mp4Source || embedSource || uniqueSources[0];
+      
+      console.log(`  ✅ Found ${uniqueSources.length} unique video sources`);
       console.log(`  📺 Best source: ${bestSource.url.substring(0, 80)}...`);
       
       return {
         url: bestSource.url,
-        sources: videoSources,
+        sources: uniqueSources,
         watchUrl: watchUrl,
-        sourceCount: videoSources.length
+        sourceCount: uniqueSources.length
       };
     }
     
+    // ============================================================
+    // If no video found, check for redirect
+    // ============================================================
+    const scripts = $$('script').map((i, el) => $$(el).html()).get();
+    for (const script of scripts) {
+      if (script) {
+        const redirectMatch = script.match(/window\.location\s*=\s*['"]([^'"]+)['"]/i);
+        if (redirectMatch) {
+          console.log(`  🔄 Found redirect, following...`);
+          try {
+            const redirectResponse = await fetch(redirectMatch[1], {
+              headers: {
+                'User-Agent': 'Mozilla/5.0'
+              }
+            });
+            if (redirectResponse.ok) {
+              const redirectData = await redirectResponse.text();
+              const redirect$ = cheerio.load(redirectData);
+              const iframeSrc = redirect$('iframe').first().attr('src');
+              if (iframeSrc) {
+                const cleanSrc = iframeSrc.startsWith('//') ? `https:${iframeSrc}` : iframeSrc;
+                console.log(`  ✅ Found video after redirect`);
+                return {
+                  url: cleanSrc,
+                  sources: [{ quality: 'HD', url: cleanSrc }],
+                  watchUrl: watchUrl,
+                  redirected: true
+                };
+              }
+            }
+          } catch (e) {
+            console.log(`  Redirect failed: ${e.message}`);
+          }
+        }
+      }
+    }
+    
+    // ============================================================
     // If no video found, return the watch URL as fallback
+    // ============================================================
     console.log(`⚠️ No video source found, returning watch URL`);
     return {
       url: watchUrl,
