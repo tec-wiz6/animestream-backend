@@ -17,6 +17,7 @@
     "cors": "^2.8.5",
     "puppeteer": "^23.0.0",
     "@supabase/supabase-js": "^2.0.0"
+    "ws": "^8.17.0"
   },
   "devDependencies": {
     "vercel": "^34.0.0"
