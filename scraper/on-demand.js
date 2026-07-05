@@ -7,6 +7,8 @@ const { scrapeFullSeasonInBackground } = require('./cli');
 // ============================================================
 // SCRAPE AND PLAY
 // ============================================================
+// scraper/on-demand.js - FIXED with better error handling
+
 async function scrapeAndPlay(animeId, episodeNum = 1) {
   console.log(`🎬 [ON-DEMAND] Play request: ${animeId} Episode ${episodeNum}`);
   
@@ -37,61 +39,104 @@ async function scrapeAndPlay(animeId, episodeNum = 1) {
       .eq('id', animeId)
       .single();
 
-    // If new anime, start background season scrape
+    // If new anime, try to find the correct slug first
+    let slugToUse = animeId;
+    
     if (!animeExists) {
-      console.log(`🔄 [ON-DEMAND] New anime! Starting background full season scrape...`);
-      scrapeFullSeasonInBackground(animeId)
-        .then(() => console.log(`✅ [ON-DEMAND] Background scrape complete for ${animeId}`))
-        .catch(err => console.error(`❌ [ON-DEMAND] Background scrape failed:`, err.message));
+      console.log(`🔄 [ON-DEMAND] New anime detected: ${animeId}`);
+      
+      // Try to find the correct slug by searching
+      try {
+        const { scrapeHiAnime } = require('./sources/hianime');
+        // Just do a search to get the slug
+        const searchResult = await scrapeHiAnime(animeId, 1);
+        if (searchResult && searchResult.watchUrl) {
+          const match = searchResult.watchUrl.match(/\/watch\/([^-]+(?:-[^-]+)*?)(?:-episode-|$)/);
+          if (match) {
+            slugToUse = match[1];
+            console.log(`📺 Found correct slug: ${slugToUse}`);
+            
+            // If the slug is different, update the anime ID for this request
+            if (slugToUse !== animeId) {
+              // Check if the slug exists in DB
+              const { data: slugExists } = await supabase
+                .from('anime')
+                .select('id')
+                .eq('id', slugToUse)
+                .single();
+              
+              if (slugExists) {
+                // Use the slug from now on
+                console.log(`✅ Using existing anime with slug: ${slugToUse}`);
+                animeId = slugToUse;
+              }
+            }
+          }
+        }
+      } catch (searchError) {
+        console.log(`⚠️ Could not find correct slug: ${searchError.message}`);
+      }
     }
 
-    // Scrape requested episode NOW
+    // Try to get the episode source with the slug
     console.log(`📡 [ON-DEMAND] Scraping episode ${episodeNum} with Puppeteer...`);
     const source = await getEpisodeVideoSourceBrowser(animeId, episodeNum);
-    
-    // Save to Supabase
-    await supabase
-      .from('episode_sources')
-      .upsert(
-        {
-          anime_id: animeId,
-          episode_number: episodeNum,
-          embed_url: source.url,
-          watch_url: source.watchUrl || source.url,
-          via: 'on-demand-puppeteer',
-          updated_at: new Date().toISOString()
-        },
-        { onConflict: 'anime_id,episode_number' }
-      );
 
-    // Save anime if new
-    if (!animeExists) {
-      const animeName = animeId.split('-').map(word => 
-        word.charAt(0).toUpperCase() + word.slice(1)
-      ).join(' ');
-      
+    // If we got a valid source, save it
+    if (source && source.url && !source.fallback) {
+      // Save to Supabase
       await supabase
-        .from('anime')
+        .from('episode_sources')
         .upsert(
           {
-            id: animeId,
-            name: animeName,
-            last_scraped: new Date().toISOString()
+            anime_id: animeId,
+            episode_number: episodeNum,
+            embed_url: source.url,
+            watch_url: source.watchUrl || source.url,
+            via: 'on-demand-puppeteer',
+            updated_at: new Date().toISOString()
           },
-          { onConflict: 'id' }
+          { onConflict: 'anime_id,episode_number' }
         );
-    }
 
-    console.log(`✅ [ON-DEMAND] Episode ${episodeNum} ready for playback!`);
-    
-    return {
-      url: source.url,
-      sources: [{ quality: 'HD', url: source.url }],
-      watchUrl: source.watchUrl || source.url,
-      via: 'on-demand-puppeteer',
-      fromCache: false,
-      backgroundScraping: !animeExists
-    };
+      // Save anime if new
+      if (!animeExists) {
+        const animeName = animeId.split('-').map(word => 
+          word.charAt(0).toUpperCase() + word.slice(1)
+        ).join(' ');
+        
+        await supabase
+          .from('anime')
+          .upsert(
+            {
+              id: animeId,
+              name: animeName,
+              last_scraped: new Date().toISOString()
+            },
+            { onConflict: 'id' }
+          );
+      }
+
+      console.log(`✅ [ON-DEMAND] Episode ${episodeNum} scraped and saved!`);
+      
+      // Start background scraping for more episodes
+      if (!animeExists) {
+        setTimeout(() => {
+          scrapeFullSeasonInBackground(animeId);
+        }, 1000);
+      }
+
+      return {
+        url: source.url,
+        sources: [{ quality: 'HD', url: source.url }],
+        watchUrl: source.watchUrl || source.url,
+        via: 'on-demand-puppeteer',
+        fromCache: false,
+        backgroundScraping: !animeExists
+      };
+    } else {
+      throw new Error('Could not find video source for this anime. It may not be available on HiAnime.');
+    }
 
   } catch (error) {
     console.error(`❌ [ON-DEMAND] Failed:`, error.message);
