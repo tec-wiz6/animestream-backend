@@ -126,8 +126,10 @@ app.get('/api/anime/:id/episode/:num', async (req, res) => {
   }
 });
 
+// api/index.js - Add better error handling for on-demand scraping
+
 // ============================================================
-// ON-DEMAND PLAY ENDPOINT
+// ON-DEMAND PLAY ENDPOINT (FIXED)
 // ============================================================
 app.get('/api/anime/:id/play/:num', async (req, res) => {
   try {
@@ -168,27 +170,41 @@ app.get('/api/anime/:id/play/:num', async (req, res) => {
       });
     }
 
-    // NOT IN DB → SCRAPE ON-DEMAND
+    // NOT IN DB → Try on-demand scraping
     console.log(`🔄 [API] On-demand scraping: ${id} Episode ${episodeNum}`);
     
-    const source = await scrapeAndPlay(id, episodeNum);
+    try {
+      const source = await scrapeAndPlay(id, episodeNum);
+      
+      videoSource = {
+        url: source.url,
+        sources: [{ quality: 'HD', url: source.url }],
+        watchUrl: source.watchUrl || source.url,
+        via: source.via || 'on-demand',
+      };
 
-    videoSource = {
-      url: source.url,
-      sources: [{ quality: 'HD', url: source.url }],
-      watchUrl: source.watchUrl || source.url,
-      via: source.via || 'on-demand',
-    };
+      cache.set(cacheKey, videoSource);
 
-    cache.set(cacheKey, videoSource);
-
-    res.json({
-      ...videoSource,
-      cached: false,
-      source: 'on-demand-scrape',
-      backgroundScraping: source.backgroundScraping || false,
-      message: source.backgroundScraping ? 'Background scraping full season...' : 'Episode ready!'
-    });
+      return res.json({
+        ...videoSource,
+        cached: false,
+        source: 'on-demand-scrape',
+        backgroundScraping: source.backgroundScraping || false,
+        message: source.backgroundScraping ? 'Background scraping full season...' : 'Episode ready!'
+      });
+      
+    } catch (scrapeError) {
+      console.error('❌ On-demand scrape failed:', scrapeError.message);
+      
+      // Return a user-friendly error
+      return res.status(404).json({
+        error: 'Episode not available',
+        message: `"${id}" is not in our database yet. Try searching for it first, or it may not be available.`,
+        suggestion: 'Go back and search for the anime you want to watch.',
+        animeId: id,
+        episode: episodeNum
+      });
+    }
 
   } catch (error) {
     console.error('Error in on-demand play:', error);
@@ -198,7 +214,6 @@ app.get('/api/anime/:id/play/:num', async (req, res) => {
     });
   }
 });
-
 // ============================================================
 // BACKGROUND SCRAPE ENDPOINT
 // ============================================================
