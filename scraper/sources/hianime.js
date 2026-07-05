@@ -1,4 +1,4 @@
-// scraper/sources/hianime.js
+// scraper/sources/hianime.js - FIXED VERSION
 const cheerio = require('cheerio');
 const fetch = require('node-fetch');
 const { getEpisodeVideoSourceBrowser } = require('./hianimeBrowser');
@@ -17,10 +17,8 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
 
     const response = await fetch(searchUrl, {
       headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept':
-          'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1'
@@ -34,9 +32,7 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     const html = await response.text();
     const $ = cheerio.load(html);
 
-    // ============================================================
-    // COLLECT SEARCH RESULTS
-    // ============================================================
+    // Collect search results
     const animeResults = [];
 
     $('.film-poster a, .poster a, .thumb a, .film-list .film-poster a, .anime-item a, .movie-item a').each(
@@ -49,32 +45,19 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
         if (!match) return;
 
         const img = $(el).find('img');
-        const title =
-          img.attr('alt') ||
-          $(el).find('.title').text() ||
-          $(el).find('.name').text() ||
-          $(el).text().trim() ||
-          match[1];
-
+        const title = img.attr('alt') || $(el).find('.title').text() || $(el).find('.name').text() || $(el).text().trim() || match[1];
         const slug = match[1];
         const titleLower = (title || '').toLowerCase();
 
-        const isMovie =
-          titleLower.includes('movie') ||
-          titleLower.includes('film') ||
-          titleLower.includes('special');
-
-        const isSeason =
-          titleLower.includes('season') ||
-          titleLower.includes('part') ||
-          titleLower.includes('arc');
+        const isMovie = titleLower.includes('movie') || titleLower.includes('film') || titleLower.includes('special');
+        const isSeason = titleLower.includes('season') || titleLower.includes('part') || titleLower.includes('arc');
 
         animeResults.push({
-          slug,
-          href,
-          title,
-          isMovie,
-          isSeason,
+          slug: slug,
+          href: href,
+          title: title,
+          isMovie: isMovie,
+          isSeason: isSeason,
           slugLength: slug.length
         });
       }
@@ -91,9 +74,7 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       console.log(`    ${i + 1}. ${r.title || r.slug} ${type}`);
     });
 
-    // ============================================================
-    // SCORE RESULTS
-    // ============================================================
+    // Score and pick best match
     const searchLower = animeId.toLowerCase();
     const searchWords = searchLower.split(/\s+/).filter(Boolean);
 
@@ -106,20 +87,13 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       if (result.isMovie) score -= 20;
 
       if (titleLower === searchLower) score += 30;
-
-      const allWordsMatch = searchWords.every((word) =>
-        titleLower.includes(word)
-      );
+      const allWordsMatch = searchWords.every((word) => titleLower.includes(word));
       if (allWordsMatch) score += 15;
 
       if (result.slugLength < 20) score += 5;
       if (result.slugLength < 15) score += 5;
 
-      if (
-        !titleLower.includes('movie') &&
-        !titleLower.includes('film') &&
-        !titleLower.includes('special')
-      ) {
+      if (!titleLower.includes('movie') && !titleLower.includes('film') && !titleLower.includes('special')) {
         score += 10;
       }
 
@@ -130,19 +104,37 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
     const bestMatch = scoredResults[0];
     const animeSlug = bestMatch.slug;
 
-    console.log(
-      `📺 Selected: ${bestMatch.title || animeSlug} (score: ${bestMatch.score})`
-    );
+    console.log(`📺 Selected: ${bestMatch.title || animeSlug} (score: ${bestMatch.score})`);
     console.log(`📺 Final anime slug: ${animeSlug}`);
 
     // ============================================================
-    // FIND EPISODE LIST PAGE
+    // CRITICAL FIX: Use the SLUG, not the search term!
     // ============================================================
+    // If episodeNum is provided, use the SLUG for the watch URL
+    if (episodeNum) {
+      console.log(`  Testing episode ${episodeNum} video source...`);
+      // Use the SLUG for the watch URL
+      const source = await getEpisodeVideoSource(animeSlug, episodeNum);
+      
+      // Check if we got a real source or fallback
+      const isFallback = source.fallback || 
+        (source.sources && source.sources.length === 1 && 
+         source.sources[0].url === source.watchUrl);
+      
+      if (isFallback) {
+        console.log('  ⚠️ Static HTML source looks like fallback, trying browser (Puppeteer)...');
+        const browserSource = await getEpisodeVideoSourceBrowser(animeSlug, episodeNum);
+        return browserSource;
+      }
+      
+      return source;
+    }
+
+    // Get episode list (use slug for episode list URL)
     const episodeUrls = [
       `${BASE_URL}/category/${animeSlug}`,
       `${BASE_URL}/anime/${animeSlug}`,
       `${BASE_URL}/series/${animeSlug}`,
-      `${BASE_URL}/watch/${animeSlug}` // extra fallback
     ];
 
     let $$ = null;
@@ -151,15 +143,12 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       try {
         const epResponse = await fetch(url, {
           headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
           }
         });
 
         if (!epResponse.ok) {
-          console.log(
-            `  ⚠️ Episode list HTTP status ${epResponse.status} at ${url}`
-          );
+          console.log(`  ⚠️ Episode list HTTP status ${epResponse.status} at ${url}`);
           continue;
         }
 
@@ -175,42 +164,10 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
 
     if (!$$) {
       console.log(`⚠️ Could not find episode list for: ${animeSlug}`);
-      return generateMockData(animeId, episodeNum);
+      return generateMockData(animeId, null);
     }
 
-    // ============================================================
-    // IF A SPECIFIC EPISODE SOURCE WAS REQUESTED
-    // ============================================================
-    if (episodeNum) {
-      console.log(`  Testing episode ${episodeNum} video source...`);
-
-      // First try static HTML extraction
-      const staticSource = await getEpisodeVideoSource(animeSlug, episodeNum);
-
-      const onlyWatchUrl =
-        !staticSource ||
-        staticSource.fallback ||
-        (staticSource.sources &&
-          staticSource.sources.length === 1 &&
-          staticSource.sources[0].url === staticSource.watchUrl);
-
-      if (onlyWatchUrl) {
-        console.log(
-          '  ⚠️ Static HTML source looks like fallback, trying browser (Puppeteer)...'
-        );
-        const browserSource = await getEpisodeVideoSourceBrowser(
-          animeSlug,
-          episodeNum
-        );
-        return browserSource;
-      }
-
-      return staticSource;
-    }
-
-    // ============================================================
-    // COLLECT EPISODE LINKS
-    // ============================================================
+    // Collect episodes
     const episodes = [];
     const episodeSelectors = [
       '.episodes a',
@@ -222,7 +179,7 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       '.episodes .ep-item a',
       '.episode a',
       '.ep a',
-      'a[href*="episode-"]' // generic fallback
+      'a[href*="episode-"]'
     ];
 
     let episodeLinks = null;
@@ -231,18 +188,14 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       const links = $$(selector);
       if (links && links.length > 0) {
         episodeLinks = links;
-        console.log(
-          `  Found ${links.length} episode links using selector: ${selector}`
-        );
+        console.log(`  Found ${links.length} episode links using selector: ${selector}`);
         break;
       }
     }
 
     if (!episodeLinks || episodeLinks.length === 0) {
-      console.log(
-        '  No structured episode list found, scanning for episode-XX in href...'
-      );
-      $$( 'a[href*="episode-"]' ).each((i, el) => {
+      console.log('  No structured episode list found, scanning for episode-XX in href...');
+      $$('a[href*="episode-"]').each((i, el) => {
         const href = $$(el).attr('href');
         if (!href) return;
 
@@ -258,9 +211,7 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       });
 
       if (episodes.length === 0) {
-        console.log(
-          '  ⚠️ Still no episodes found, returning mock data instead.'
-        );
+        console.log('  ⚠️ Still no episodes found, returning mock data instead.');
         return generateMockData(animeId, null);
       }
 
@@ -273,10 +224,7 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
       const href = $$(el).attr('href');
       if (!href) return;
 
-      const rawTitle =
-        $$(el).text().trim() ||
-        $$(el).attr('title') ||
-        `Episode ${i + 1}`;
+      const rawTitle = $$(el).text().trim() || $$(el).attr('title') || `Episode ${i + 1}`;
 
       let epNum = null;
       const hrefMatch = href.match(/episode-(\d+)/);
@@ -308,19 +256,18 @@ async function scrapeHiAnime(animeId, episodeNum = null) {
 }
 
 // ============================================================
-// STATIC HTML VIDEO SOURCE EXTRACTION (KEPT AS FIRST TRY)
+// GET EPISODE SOURCE (Uses SLUG)
 // ============================================================
 async function getEpisodeVideoSource(animeSlug, episodeNum) {
+  // CRITICAL FIX: Use the SLUG to build the watch URL
   const watchUrl = `${BASE_URL}/watch/${animeSlug}-episode-${episodeNum}`;
   console.log(`📺 Getting video source from: ${watchUrl}`);
 
   try {
     const response = await fetch(watchUrl, {
       headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept':
-          'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
         'Connection': 'keep-alive',
         'Referer': BASE_URL,
@@ -340,29 +287,15 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
     const isTrackingUrl = (url) => {
       if (!url) return true;
       const blocked = [
-        'track',
-        'analytics',
-        'telemetry',
-        'stats',
-        'wp-json',
-        'otakuthemes',
-        'views',
-        'api',
-        '.jpg',
-        '.jpeg',
-        '.png',
-        '.gif',
-        '.webp',
-        '.svg',
-        'google-analytics',
-        'gtag',
-        'facebook',
-        'twitter'
+        'track', 'analytics', 'telemetry', 'stats', 'wp-json',
+        'otakuthemes', 'views', 'api', '.jpg', '.jpeg', '.png',
+        '.gif', '.webp', '.svg', 'google-analytics', 'gtag',
+        'facebook', 'twitter'
       ];
       return blocked.some((b) => url.toLowerCase().includes(b));
     };
 
-    // METHOD 1: Specific player iframes
+    // Look for iframes
     $('.player iframe, .video-player iframe, #player iframe, .embed-player iframe, .jwplayer iframe').each(
       (i, el) => {
         const src = $(el).attr('src') || $(el).attr('data-src');
@@ -370,9 +303,7 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
         if (isTrackingUrl(src)) return;
 
         const cleanSrc = src.startsWith('//') ? `https:${src}` : src;
-        console.log(
-          `  ✅ Found player iframe: ${cleanSrc.substring(0, 100)}...`
-        );
+        console.log(`  ✅ Found player iframe: ${cleanSrc.substring(0, 100)}...`);
         videoSources.push({
           quality: 'HD',
           url: cleanSrc
@@ -380,7 +311,7 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       }
     );
 
-    // METHOD 2: Any iframe that looks like video
+    // More iframe searches...
     if (videoSources.length === 0) {
       $('iframe').each((i, el) => {
         const src = $(el).attr('src') || $(el).attr('data-src');
@@ -388,19 +319,9 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
         if (isTrackingUrl(src)) return;
 
         const cleanSrc = src.startsWith('//') ? `https:${src}` : src;
-
         const s = cleanSrc.toLowerCase();
-        if (
-          s.includes('/embed/') ||
-          s.includes('/v/') ||
-          s.includes('player') ||
-          s.includes('video') ||
-          s.includes('stream') ||
-          s.includes('gogo')
-        ) {
-          console.log(
-            `  ✅ Found generic video iframe: ${cleanSrc.substring(0, 100)}...`
-          );
+        if (s.includes('/embed/') || s.includes('/v/') || s.includes('player') || s.includes('video') || s.includes('stream') || s.includes('gogo')) {
+          console.log(`  ✅ Found generic video iframe: ${cleanSrc.substring(0, 100)}...`);
           videoSources.push({
             quality: 'HD',
             url: cleanSrc
@@ -409,12 +330,9 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       });
     }
 
-    // METHOD 3: Video URLs inside script tags
+    // Script tags
     if (videoSources.length === 0) {
-      const scripts = $('script')
-        .map((i, el) => $(el).html())
-        .get();
-
+      const scripts = $('script').map((i, el) => $(el).html()).get();
       const embedPatterns = [
         /https?:\/\/[^\s<>'"]+\.(m3u8|mp4|ts)[^\s<>'"]*/gi,
         /https?:\/\/[^\s<>'"]+\/embed\/[^\s<>'"]*/gi,
@@ -423,38 +341,30 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
 
       for (const script of scripts) {
         if (!script) continue;
-
         for (const pattern of embedPatterns) {
           let match;
           while ((match = pattern.exec(script)) !== null) {
             let url = match[0];
             url = url.replace(/^['"]|['"]$/g, '');
             if (!url || isTrackingUrl(url)) continue;
-
-            console.log(
-              `  ✅ Found video in script: ${url.substring(0, 100)}...`
-            );
+            console.log(`  ✅ Found video in script: ${url.substring(0, 100)}...`);
             videoSources.push({
               quality: 'HD',
               url
             });
           }
         }
-
         if (videoSources.length > 0) break;
       }
     }
 
-    // METHOD 4: <video><source> tags
+    // Video tags
     if (videoSources.length === 0) {
       $('video source').each((i, el) => {
         const src = $(el).attr('src');
         if (!src) return;
         if (isTrackingUrl(src)) return;
-
-        console.log(
-          `  ✅ Found <video> source: ${src.substring(0, 100)}...`
-        );
+        console.log(`  ✅ Found <video> source: ${src.substring(0, 100)}...`);
         videoSources.push({
           quality: $(el).attr('data-quality') || 'HD',
           url: src
@@ -462,32 +372,20 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       });
     }
 
-    // METHOD 5: Player container data attributes / inner HTML
+    // Player container
     if (videoSources.length === 0) {
       const playerSelectors = [
-        '.player-container',
-        '.video-player',
-        '#player',
-        '.embed-container',
-        '.play-video',
-        '.jwplayer',
-        '#mediaplayer',
-        '.video-js',
-        '.player'
+        '.player-container', '.video-player', '#player', '.embed-container',
+        '.play-video', '.jwplayer', '#mediaplayer', '.video-js', '.player'
       ];
 
       for (const selector of playerSelectors) {
         const player = $(selector);
         if (!player || player.length === 0) continue;
 
-        const dataVideo =
-          player.attr('data-video') ||
-          player.attr('data-src') ||
-          player.attr('data-url');
+        const dataVideo = player.attr('data-video') || player.attr('data-src') || player.attr('data-url');
         if (dataVideo && !isTrackingUrl(dataVideo)) {
-          console.log(
-            `  ✅ Found video in data attribute: ${dataVideo.substring(0, 100)}...`
-          );
+          console.log(`  ✅ Found video in data attribute: ${dataVideo.substring(0, 100)}...`);
           videoSources.push({
             quality: 'HD',
             url: dataVideo
@@ -497,14 +395,9 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
 
         const inner = player.html();
         if (!inner) continue;
-
-        const match = inner.match(
-          /https?:\/\/[^"'\s]+\.(m3u8|mp4)[^"'\s]*/i
-        );
+        const match = inner.match(/https?:\/\/[^"'\s]+\.(m3u8|mp4)[^"'\s]*/i);
         if (match && !isTrackingUrl(match[0])) {
-          console.log(
-            `  ✅ Found video in player HTML: ${match[0].substring(0, 100)}...`
-          );
+          console.log(`  ✅ Found video in player HTML: ${match[0].substring(0, 100)}...`);
           videoSources.push({
             quality: 'HD',
             url: match[0]
@@ -514,44 +407,9 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       }
     }
 
-    // METHOD 6: Extra domain-based patterns
-    if (videoSources.length === 0) {
-      const scripts = $('script')
-        .map((i, el) => $(el).html())
-        .get();
-
-      const domainPatterns = [
-        /https?:\/\/[^"']*(gogoanime|gogo|anime)[^"']*\.(m3u8|mp4)[^"']*/gi,
-        /https?:\/\/[^"']*(vidstream|mp4upload|dood|streamtape|mcloud)[^"']*/gi,
-        /https?:\/\/[^"']*(emb|player|video)[^"']*\.(m3u8|mp4)[^"']*/gi
-      ];
-
-      for (const script of scripts) {
-        if (!script) continue;
-
-        for (const pattern of domainPatterns) {
-          const match = script.match(pattern);
-          if (match && !isTrackingUrl(match[0])) {
-            console.log(
-              `  ✅ Found domain embed URL: ${match[0].substring(0, 100)}...`
-            );
-            videoSources.push({
-              quality: 'HD',
-              url: match[0]
-            });
-            break;
-          }
-        }
-
-        if (videoSources.length > 0) break;
-      }
-    }
-
-    // FINAL SELECTION
     if (videoSources.length > 0) {
       const uniqueSources = [];
       const seen = new Set();
-
       for (const src of videoSources) {
         if (!src.url || isTrackingUrl(src.url)) continue;
         if (seen.has(src.url)) continue;
@@ -561,21 +419,11 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
 
       const hls = uniqueSources.find((s) => s.url.includes('.m3u8'));
       const mp4 = uniqueSources.find((s) => s.url.includes('.mp4'));
-      const embed = uniqueSources.find(
-        (s) =>
-          s.url.includes('/embed/') ||
-          s.url.includes('/v/') ||
-          s.url.toLowerCase().includes('player')
-      );
-
+      const embed = uniqueSources.find((s) => s.url.includes('/embed/') || s.url.includes('/v/') || s.url.toLowerCase().includes('player'));
       const bestSource = hls || mp4 || embed || uniqueSources[0];
 
-      console.log(
-        `  ✅ Found ${uniqueSources.length} unique video sources`
-      );
-      console.log(
-        `  📺 Best source: ${bestSource.url.substring(0, 120)}...`
-      );
+      console.log(`  ✅ Found ${uniqueSources.length} unique video sources`);
+      console.log(`  📺 Best source: ${bestSource.url.substring(0, 120)}...`);
 
       return {
         url: bestSource.url,
@@ -585,10 +433,7 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       };
     }
 
-    // No direct source found → clear fallback
-    console.log(
-      `⚠️ No video source found in HTML, returning watch URL as fallback`
-    );
+    console.log(`⚠️ No video source found in HTML, returning watch URL as fallback`);
     return {
       url: watchUrl,
       sources: [{ quality: 'HD', url: watchUrl }],
@@ -601,13 +446,14 @@ async function getEpisodeVideoSource(animeSlug, episodeNum) {
       url: watchUrl,
       sources: [{ quality: 'HD', url: watchUrl }],
       watchUrl,
-      error: err.message
+      error: err.message,
+      fallback: true
     };
   }
 }
 
 // ============================================================
-// MOCK DATA (fallback when site structure breaks)
+// MOCK DATA
 // ============================================================
 function generateMockData(animeId, episodeNum) {
   if (episodeNum) {
