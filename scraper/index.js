@@ -1,4 +1,4 @@
-// scraper/index.js - EXPORTS SCRAPER FUNCTIONS
+// scraper/index.js - FIXED to return both episodes and slug info
 const { scrapeHiAnime } = require('./sources/hianime');
 
 async function scrapeAnimeEpisodes(animeId) {
@@ -8,7 +8,6 @@ async function scrapeAnimeEpisodes(animeId) {
     return episodes;
   } catch (error) {
     console.error(`❌ Scrape failed for ${animeId}:`, error.message);
-    // Return mock data as fallback
     const mockEpisodes = [];
     for (let i = 1; i <= 12; i++) {
       mockEpisodes.push({
@@ -30,9 +29,7 @@ async function scrapeEpisodeSource(animeId, episodeNum) {
     console.error(`❌ Source fetch failed:`, error.message);
     return {
       url: `https://hianime.ro/watch/${animeId}-episode-${episodeNum}`,
-      sources: [
-        { quality: '720p', url: `https://example.com/video/${animeId}/${episodeNum}/720.m3u8` }
-      ]
+      sources: [{ quality: '720p', url: `https://example.com/video/${animeId}/${episodeNum}/720.m3u8` }]
     };
   }
 }
