@@ -40,58 +40,33 @@ async function main() {
       }
 
       // Upsert episodes in Supabase
-      if (episodes && episodes.length > 0) {
-        const episodeRows = episodes.map((ep) => ({
+      // Upsert episodes in Supabase
+if (episodes && episodes.length > 0) {
+  for (const ep of episodes) {
+    const { error: epError } = await supabase
+      .from('episodes')
+      .upsert(
+        {
           anime_id: anime.id,
           episode_number: ep.number,
           title: ep.title,
           watch_url: ep.url,
-        }));
+        },
+        { onConflict: 'anime_id,episode_number' }
+      );
 
-        const { error: epError } = await supabase
-          .from('episodes')
-          .upsert(episodeRows, { onConflict: 'anime_id,episode_number' });
+    if (epError) {
+      console.error(
+        `❌ Supabase episode upsert error for ${anime.name} ep ${ep.number}:`,
+        epError.message
+      );
+    }
+  }
 
-        if (epError) {
-          console.error('❌ Supabase episodes upsert error:', epError.message);
-        } else {
-          console.log(
-            `✅ Upserted ${episodeRows.length} episodes for ${anime.name}`
-          );
-        }
-
-        // Scrape and upsert source for episode 1
-        console.log('  Testing episode 1 video source...');
-        const sourceEpisode1 = await scrapeEpisodeSource(anime.id, 1);
-        console.log(
-          `  📺 Video URL: ${sourceEpisode1.url?.substring(0, 80) || 'N/A'}...`
-        );
-        console.log(
-          `  📊 Sources found: ${sourceEpisode1.sources?.length || 0}`
-        );
-
-        const { error: srcError } = await supabase
-          .from('episode_sources')
-          .upsert(
-            {
-              anime_id: anime.id,
-              episode_number: 1,
-              embed_url: sourceEpisode1.url,
-              watch_url: sourceEpisode1.watchUrl,
-              via: sourceEpisode1.via || 'puppeteer',
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'anime_id,episode_number' }
-          );
-
-        if (srcError) {
-          console.error('❌ Supabase source upsert error:', srcError.message);
-        } else {
-          console.log(`✅ Upserted episode 1 source for ${anime.name}`);
-        }
-      } else {
-        console.log(`⚠️ No episodes scraped for ${anime.name}`);
-      }
+  console.log(`✅ Upserted ${episodes.length} episodes for ${anime.name}`);
+} else {
+  console.log(`⚠️ No episodes scraped for ${anime.name}`);
+}
 
       // Small delay between anime to be gentle to HiAnime
       await new Promise((resolve) => setTimeout(resolve, 3000));
