@@ -118,6 +118,19 @@ app.get('/api/anime/:id/episode/:num', async (req, res) => {
   }
 });
 
+app.get('/api/anime-list', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('anime')
+      .select('id, name, last_scraped')
+      .order('name');
+    
+    if (error) throw error;
+    res.json({ anime: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 // Search anime (Jikan API)
 app.get('/api/search', async (req, res) => {
   try {
