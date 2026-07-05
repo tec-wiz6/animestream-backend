@@ -106,47 +106,41 @@ async function scrapeFullSeason(anime) {
   let failCount = 0;
 
   for (let i = 0; i < episodesToScrape; i++) {
-    const ep = episodesToProcess[i];
-    try {
-      const usePuppeteer = (CONFIG.USE_PUPPETEER_FOR_EPISODE_1 && ep.number === 1);
-      
-      process.stdout.write(`\r  📡 Episode ${ep.number}/${episodesToProcess.length} (${usePuppeteer ? '🚀' : '⚡'})... `);
+  const ep = episodesToProcess[i];
+  try {
+    process.stdout.write(`\r  📡 Episode ${ep.number}/${episodesToProcess.length} (🚀)... `);
+    
+    // ALWAYS use Puppeteer to get the megaplay URL
+    const source = await getEpisodeVideoSourceBrowser(anime.id, ep.number);
+    
+    const { error: srcError } = await supabase
+      .from('episode_sources')
+      .upsert(
+        {
+          anime_id: anime.id,
+          episode_number: ep.number,
+          embed_url: source.url,
+          watch_url: source.watchUrl || source.url,
+          via: source.via || 'puppeteer',
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: 'anime_id,episode_number' }
+      );
 
-      let source;
-      if (usePuppeteer) {
-        source = await getEpisodeVideoSourceBrowser(anime.id, ep.number);
-      } else {
-        source = await scrapeHiAnime(anime.id, ep.number);
-      }
-
-      const { error: srcError } = await supabase
-        .from('episode_sources')
-        .upsert(
-          {
-            anime_id: anime.id,
-            episode_number: ep.number,
-            embed_url: source.url || source.watchUrl,
-            watch_url: source.watchUrl || source.url,
-            via: source.via || (usePuppeteer ? 'puppeteer-cli' : 'static-cli'),
-            updated_at: new Date().toISOString()
-          },
-          { onConflict: 'anime_id,episode_number' }
-        );
-
-      if (srcError) {
-        console.error(`\n❌ Source error for ep ${ep.number}:`, srcError.message);
-        failCount++;
-      } else {
-        sourceCount++;
-      }
-
-      await new Promise(resolve => setTimeout(resolve, CONFIG.EPISODE_DELAY_MS));
-
-    } catch (epError) {
-      console.error(`\n❌ Failed to scrape episode ${ep.number}:`, epError.message);
+    if (srcError) {
+      console.error(`\n❌ Source error for ep ${ep.number}:`, srcError.message);
       failCount++;
+    } else {
+      sourceCount++;
     }
+
+    await new Promise(resolve => setTimeout(resolve, CONFIG.EPISODE_DELAY_MS));
+
+  } catch (epError) {
+    console.error(`\n❌ Failed to scrape episode ${ep.number}:`, epError.message);
+    failCount++;
   }
+}
 
   console.log(`\n✅ Scraped ${sourceCount}/${episodesToScrape} episode sources`);
   if (failCount > 0) {
